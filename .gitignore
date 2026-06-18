@@ -1,0 +1,4 @@
+bench/out*/
+agentdash-go
+/agentdash-*
+dist/

@@ -1,0 +1,92 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./... -race
+      - name: fuzz the line parsers
+        run: go test -run=NONE -fuzz=FuzzApply -fuzztime=30s ./internal/parse
+
+  go-hermes:
+    # the opt-in Hermes build compiles different files (internal/hermesdb and the
+    # *_on.go shims); exercise it so it can't silently rot while the default
+    # build stays green
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -tags hermes ./...
+      - run: go test -tags hermes ./... -race
+
+  golangci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: latest
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: shellcheck -x install.sh legacy/agentdash.sh integrations/statusbar.sh tests/demo-env.sh bench/*.sh tools/parity.sh
+
+  legacy-bats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: install bats
+        run: |
+          git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
+          sudo /tmp/bats-core/install.sh /usr/local
+      - run: bats tests/
+
+  parity:
+    # the v2 exit gate: legacy and go --json must agree on the fixture box
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: sudo apt-get update && sudo apt-get install -y jq
+      - run: tools/parity.sh
+
+  no-network:
+    # ground rule: no runtime network calls, ever (the docker unix socket
+    # is the single permitted local socket)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o /tmp/agentdash ./cmd/agentdash
+      - name: strace a one-shot run for network syscalls
+        run: |
+          sudo apt-get update && sudo apt-get install -y strace
+          strace -f -e trace=connect,sendto -o /tmp/net.log /tmp/agentdash --json >/dev/null || true
+          if grep -E 'connect\(' /tmp/net.log | grep -v 'docker.sock' | grep -vE 'AF_UNIX|ENOENT'; then
+            echo "unexpected network syscalls"; exit 1
+          fi
+          echo "no network calls observed"

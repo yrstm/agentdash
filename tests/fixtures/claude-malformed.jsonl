@@ -1,0 +1,6 @@
+this line is not json at all {{{
+{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"content":"survive malformed neighbours"}}
+{"truncated": "line with no clos
+{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"id":"msg_a","model":"claude-sonnet-4-6","content":[{"type":"text","text":"still here"}],"usage":{"input_tokens":2000,"output_tokens":100}}}
+[]
+42

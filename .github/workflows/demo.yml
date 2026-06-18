@@ -1,0 +1,30 @@
+# regenerates demo.gif from demo.tape and commits it; run it from the
+# Actions tab after changing the renderer or the tape
+name: demo
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: install vhs
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.charm.sh/apt/gpg.key \
+            | sudo gpg --dearmor -o /etc/apt/keyrings/charm.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" \
+            | sudo tee /etc/apt/sources.list.d/charm.list
+          sudo apt-get update && sudo apt-get install -y vhs ttyd ffmpeg
+      - run: vhs demo.tape
+      - uses: stefanzweifel/git-auto-commit-action@v6
+        with:
+          commit_message: regenerate demo gif
+          file_pattern: demo.gif

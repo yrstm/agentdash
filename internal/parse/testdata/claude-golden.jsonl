@@ -1,0 +1,9 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"00000000-0000-0000-0000-0000000000a1"}
+{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"content":"fix the \"quoted\" test: ünïcode ✓ 中文"}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:05.000Z","message":{"id":"msg_01","model":"claude-opus-4-8","content":[{"type":"text","text":"Looking   at\n it."}],"usage":{"input_tokens":100,"cache_creation_input_tokens":300,"cache_read_input_tokens":600,"output_tokens":50}}}
+{"type":"assistant","timestamp":"2026-01-01T00:00:06.000Z","message":{"id":"msg_01","model":"claude-opus-4-8","content":[{"type":"tool_use","name":"Bash"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":300,"cache_read_input_tokens":600,"output_tokens":50}}}
+this line is not json {{{ and must be skipped without killing the scan
+{"type":"user","timestamp":"2026-01-01T00:01:00.000Z","toolUseResult":{"ok":true},"message":{"content":[{"type":"text","text":"tool output, not a human turn"}]}}
+{"type":"summary","summary":"checkout fix session"}
+{"type":"user","timestamp":"2026-01-01T00:02:00.000Z","message":{"content":["junk-part",{"type":"text","text":"second human turn"}]}}
+{"type":"assistant","timestamp":"2026-01-01T00:02:30.000Z","message":{"id":"msg_02","model":"claude-fable-5","content":"plain string reply","usage":{"input_tokens":2000,"output_tokens":75}}}

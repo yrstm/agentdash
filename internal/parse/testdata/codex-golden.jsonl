@@ -1,0 +1,6 @@
+{"timestamp":"2026-01-01T00:00:00.000Z","type":"session_meta","payload":{"id":"00000000-0000-0000-0000-0000000000c1","cwd":"/work/svc","originator":"codex-tui","cli_version":"0.134.0"}}
+{"timestamp":"2026-01-01T00:00:02.000Z","type":"turn_context","payload":{"model":"gpt-5.5"}}
+{"timestamp":"2026-01-01T00:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"port the cron job"}}
+{"timestamp":"2026-01-01T00:00:10.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"text","text":"on it"}]}}
+{"timestamp":"2026-01-01T00:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":50000,"cached_input_tokens":30000,"output_tokens":4000},"last_token_usage":{"input_tokens":40000,"cached_input_tokens":28000},"model_context_window":272000}}}
+{"timestamp":"2026-01-01T00:01:05.000Z","type":"event_msg","payload":{"type":"agent_message","message":"Queue   port done;\ttests green."}}
