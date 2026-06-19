@@ -81,10 +81,16 @@ agentdash why <row|pid>    where every value on the row came from
 agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
-agentdash memory [repo|.]  agent-memory drift and change history
+agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
+agentdash update           reinstall the latest from @main (keeps your build tags)
 ```
 
 ### Memory drift (`agentdash memory`)
+
+In plain terms: agentdash quietly watches the memory files your agents rely on
+(`CLAUDE.md`, `AGENTS.md`) and tells you when a project's memory has gone stale
+or out of step with recent work — so you can spot an agent running on outdated
+notes before it bites you.
 
 Agents accumulate durable memory in repo-root `CLAUDE.md` / `AGENTS.md`.
 Every normal `agentdash` run opportunistically samples those files for the
@@ -102,6 +108,15 @@ prints that project's change log, newest last, each entry labelled
 `created` / `grew` / `shrunk` / `same-size-rewrite`. Local only, no network,
 read-only toward your files; the scope is deliberately tight (repo-root files,
 never a filesystem crawl).
+
+### Updating (`agentdash update`)
+
+`agentdash update` reinstalls the latest from `@main` for you, reusing the
+build tags of the running binary — so a Hermes build self-updates with
+`-tags=hermes` and keeps session monitoring. It is the one command that touches
+the network (it shells out to `go install`); the live board and every other mode
+stay zero-network. The plain board also shows the binary's build age and nudges
+you to update once it crosses `AGENTDASH_STALE_DAYS` (default 14).
 
 ### Watch mode keys
 
