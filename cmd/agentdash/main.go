@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,61 @@ import (
 )
 
 var version = "2.3.1-dev"
+
+// pseudoTSRe pulls the 14-digit UTC timestamp and 12-char hash out of a module
+// pseudo-version (e.g. v0.0.0-20260619123456-abcdef012345), the form that
+// `go install pkg@main` stamps when there is no VCS tree to read.
+var pseudoTSRe = regexp.MustCompile(`-(\d{14})-([0-9a-f]{12})`)
+
+// buildStamp reports the binary's build age in seconds, its short revision and
+// the dirty flag, read from the embedded VCS stamp (a `go build`/`install` from
+// a checkout) or, failing that, the module pseudo-version. ageSecs is -1 when
+// the binary carries no build provenance at all. Local read only — no network,
+// so the default board keeps its zero-network guarantee.
+func buildStamp(now time.Time) (ageSecs int64, rev string, dirty bool) {
+	ageSecs = -1
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+	var built time.Time
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.time":
+			if t, err := time.Parse(time.RFC3339, s.Value); err == nil {
+				built = t
+			}
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if built.IsZero() { // module-mode install: recover date+hash from the pseudo-version
+		if m := pseudoTSRe.FindStringSubmatch(bi.Main.Version); m != nil {
+			if t, err := time.Parse("20060102150405", m[1]); err == nil {
+				built, rev = t, m[2]
+			}
+		}
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	if built.IsZero() {
+		return
+	}
+	return int64(now.Sub(built).Seconds()), rev, dirty
+}
+
+// staleDays is the build-age threshold for the reinstall nudge (0 disables it).
+func staleDays() int {
+	if v := os.Getenv("AGENTDASH_STALE_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 14
+}
 
 const usageText = `agentdash: ` + "`w`" + ` for your AI agents (Linux-only, read-only, no daemon)
 
@@ -63,6 +119,8 @@ environment:
   AGENTDASH_STUCK_SECS=90    quiet past this with no reply -> "stuck?", else "busy?"
   AGENTDASH_PROC_TICK=1      watch mode: seconds between /proc rescans
   AGENTDASH_EXPAND=1         behave as if -a was passed (always expand sections)
+  AGENTDASH_STALE_DAYS=14    nudge to reinstall once the binary is older than
+                             this many days (0 disables; no-network, build-age)
 `
 
 func main() {
@@ -193,6 +251,8 @@ func main() {
 		}
 		if !plain && term.IsTerminal(int(os.Stdout.Fd())) { // TTY only — never in --json/--plain/pipes
 			fmt.Print(render.Banner(b, theme, width))
+			age, rev, dirty := buildStamp(time.Now())
+			fmt.Print(render.UpdateHint(theme, rev, dirty, age, staleDays()))
 		}
 		fmt.Print(render.Table(b, theme, render.Opts{
 			Long: longView, Expand: expand, Width: width, Home: home}))
