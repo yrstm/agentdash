@@ -304,6 +304,10 @@ func runMemory(rest []string) {
 			emitJSON(out, err)
 			return
 		}
+		if len(entries) == 0 && len(memory.Locate(proj)) == 0 {
+			fmt.Printf("  no CLAUDE.md / AGENTS.md found at %s\n", proj)
+			return
+		}
 		fmt.Print(render.MemoryLog(proj, entries, theme))
 		return
 	}

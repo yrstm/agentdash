@@ -201,7 +201,10 @@ func BuildBoard(logPath string, live map[string]int, now time.Time) []BoardRow {
 	concurrent := map[string]bool{}
 	for _, e := range events {
 		scope[e.Project] = true
-		if t := parseTS(e.TS); t > latestMem[e.Project] {
+		// "since memory last changed" is the file's own mtime, not when we first
+		// sampled it — otherwise a months-old file looks freshly changed on the
+		// first run, masking real staleness.
+		if t := parseTS(e.Mtime); t > latestMem[e.Project] {
 			latestMem[e.Project] = t
 		}
 		if e.Sessions >= 2 {

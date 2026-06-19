@@ -48,8 +48,9 @@ func MemoryLog(project string, entries []memory.LogEntry, t Theme) string {
 		return b.String()
 	}
 	for _, e := range entries {
-		when := e.TS
-		if ts, err := time.Parse(time.RFC3339, e.TS); err == nil {
+		// show when the memory actually changed (file mtime), not when we sampled
+		when := e.Mtime
+		if ts, err := time.Parse(time.RFC3339, e.Mtime); err == nil {
 			when = ts.Local().Format("2006-01-02 15:04")
 		}
 		flag := ""
