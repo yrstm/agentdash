@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime/debug"
 	"strconv"
@@ -18,7 +19,9 @@ import (
 
 	"github.com/yrstm/agentdash/internal/board"
 	"github.com/yrstm/agentdash/internal/jsonout"
+	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
+	"github.com/yrstm/agentdash/internal/paths"
 	"github.com/yrstm/agentdash/internal/render"
 	"github.com/yrstm/agentdash/internal/ui"
 )
@@ -107,6 +110,8 @@ usage: agentdash [flags | subcommand]
   label <row|pid> <text>   set a persistent TASK label ("" clears)
   resume <row|pid>   print the ` + "`claude --resume`" + ` command (with cwd)
   recap [4h|30m|2d]  what changed since you last looked (default: last recap)
+  memory [repo|.]    agent-memory drift: no arg = cross-project health board;
+                     a repo = its CLAUDE.md/AGENTS.md change log (local, sampled)
   update             reinstall the latest from @main — the ONE networked
                      command (the board itself never touches the network);
                      keeps your build tags, so Hermes stays Hermes
@@ -137,6 +142,9 @@ func main() {
 			return
 		case "update":
 			runUpdate()
+			return
+		case "memory":
+			runMemory(args[1:])
 			return
 		}
 	}
@@ -263,6 +271,43 @@ func main() {
 		fmt.Print(render.Table(b, theme, render.Opts{
 			Long: longView, Expand: expand, Width: width, Home: home}))
 	}
+}
+
+// runMemory drives the `agentdash memory` subcommand: with no argument it shows
+// the cross-project memory-health board (most-stale first); with a repo path or
+// "." it shows that project's memory change log. Both sample fresh first, so an
+// explicit inspection always reflects the current files.
+func runMemory(rest []string) {
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	now := time.Now()
+	logPath := memory.LogPath()
+	live := board.MemoryProjects(now.Unix())
+
+	if len(rest) > 0 && rest[0] != "" {
+		proj := resolveProject(rest[0])
+		memory.Sample(logPath, map[string]int{proj: live[proj]}, now)
+		fmt.Print(render.MemoryLog(proj, memory.ProjectLog(logPath, proj), theme))
+		return
+	}
+	memory.Sample(logPath, live, now)
+	fmt.Print(render.MemoryBoard(memory.BuildBoard(logPath, live, now), theme))
+}
+
+// resolveProject maps a memory argument ("." or a path) to a project root.
+func resolveProject(arg string) string {
+	if arg == "." {
+		if wd, err := os.Getwd(); err == nil {
+			arg = wd
+		}
+	}
+	abs, err := filepath.Abs(arg)
+	if err != nil {
+		abs = arg
+	}
+	if r := paths.RepoRoot(abs); r != "" {
+		return r
+	}
+	return abs
 }
 
 // runUpdate is the one deliberately networked path. The board and every

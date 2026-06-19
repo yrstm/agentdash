@@ -81,7 +81,27 @@ agentdash why <row|pid>    where every value on the row came from
 agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
+agentdash memory [repo|.]  agent-memory drift and change history
 ```
+
+### Memory drift (`agentdash memory`)
+
+Agents accumulate durable memory in repo-root `CLAUDE.md` / `AGENTS.md`.
+Every normal `agentdash` run opportunistically samples those files for the
+projects that have a live session (an mtime/size check short-circuits before
+hashing, so steady-state cost is tiny) and appends to an append-only,
+never-pruned log at `~/.cache/agentdash/memory-log.jsonl` — but only when the
+content hash actually changes, so a same-size edit is still recorded.
+
+`agentdash memory` shows a cross-project board ranked by how far each
+project's memory trails its recent work (git commit time and dirty-tree state
+when available, else file mtime), flags `stale` and — when a memory change
+landed while two or more live sessions shared the project — `⚠concurrent`
+(a mechanical risk signal, not proven authorship). `agentdash memory <repo|.>`
+prints that project's change log, newest last, each entry labelled
+`created` / `grew` / `shrunk` / `same-size-rewrite`. Local only, no network,
+read-only toward your files; the scope is deliberately tight (repo-root files,
+never a filesystem crawl).
 
 ### Watch mode keys
 

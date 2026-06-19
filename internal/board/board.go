@@ -12,7 +12,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
 	"github.com/yrstm/agentdash/internal/paths"
 	"github.com/yrstm/agentdash/internal/procs"
@@ -127,6 +129,32 @@ func ConfPath() string { return confPath() }
 
 var profileArgRe = regexp.MustCompile(` -p +([^ ]+)`)
 
+// projectSessions maps each live (non-wrapper) agent's project root to its live
+// session count — the scope the memory sampler works over. Falls back to the
+// cwd when it is not inside a git worktree.
+func projectSessions(agents []procs.Proc) map[string]int {
+	m := map[string]int{}
+	for _, p := range agents {
+		if procs.WrapperKinds[p.Kind] {
+			continue
+		}
+		proj := paths.RepoRoot(p.Cwd)
+		if proj == "" {
+			proj = p.Cwd
+		}
+		if proj != "" {
+			m[proj]++
+		}
+	}
+	return m
+}
+
+// MemoryProjects discovers live agent sessions and returns project root -> live
+// session count, for the `agentdash memory` subcommand.
+func MemoryProjects(now int64) map[string]int {
+	return projectSessions(procs.Discover(now))
+}
+
 // Collect performs the expensive half of a frame.
 func Collect(now int64, opt Options) *Board {
 	// start docker first so its socket round-trip overlaps the scan
@@ -151,6 +179,9 @@ func Collect(now int64, opt Options) *Board {
 	cache := parse.LoadCache(cachePath())
 	agents := procs.Discover(now)
 	sort.Slice(agents, func(i, j int) bool { return agents[i].PID < agents[j].PID })
+	// opportunistically record any memory-file changes for live projects; cheap
+	// (mtime/size short-circuit before hashing) and fail-soft
+	memory.Sample(memory.LogPath(), projectSessions(agents), time.Unix(now, 0))
 	panes := procs.PanesByTTY()
 
 	newPidMap := map[string]parse.PidInfo{}
