@@ -21,13 +21,14 @@ func TestUpdateHint(t *testing.T) {
 	if !strings.Contains(fresh, "build abc1234") || !strings.Contains(fresh, "2d old") {
 		t.Errorf("fresh hint missing age stamp: %q", fresh)
 	}
-	if strings.Contains(fresh, "reinstall") {
+	if strings.Contains(fresh, "agentdash update") {
 		t.Errorf("fresh build should not nudge: %q", fresh)
 	}
 
-	// stale + dirty: nudge with day count, reinstall command, dirty marker
+	// stale + dirty: nudge with day count, the update subcommand, the go
+	// install fallback, and the dirty marker
 	stale := UpdateHint(th, "abc1234", true, 30*86400, 14)
-	for _, want := range []string{"abc1234+", "30d since build", "reinstall:", "go install", "cmd/agentdash@main"} {
+	for _, want := range []string{"abc1234+", "30d since build", "agentdash update", "go install", "cmd/agentdash@main"} {
 		if !strings.Contains(stale, want) {
 			t.Errorf("stale hint missing %q: %q", want, stale)
 		}

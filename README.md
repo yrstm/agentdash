@@ -123,7 +123,9 @@ agentdash -w --on-stuck <cmd>       run <cmd> when an agent's status becomes stu
 The command runs through `sh -c`, so quote it as one argument. It fires
 once on the *transition into* the state (not repeatedly while it lasts),
 and only with `-w`. agentdash itself opens no socket and makes no network
-call; your command is what reaches out.
+call; your command is what reaches out. (The sole exception anywhere is the
+explicit `agentdash update`, which shells out to `go install` to reinstall
+itself — the board and every observation mode stay zero-network.)
 
 Each invocation receives the agent as JSON on **stdin** — one object,
 byte-identical to an entry in the `agents` array of `agentdash --json`,

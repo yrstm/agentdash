@@ -107,6 +107,9 @@ usage: agentdash [flags | subcommand]
   label <row|pid> <text>   set a persistent TASK label ("" clears)
   resume <row|pid>   print the ` + "`claude --resume`" + ` command (with cwd)
   recap [4h|30m|2d]  what changed since you last looked (default: last recap)
+  update             reinstall the latest from @main — the ONE networked
+                     command (the board itself never touches the network);
+                     keeps your build tags, so Hermes stays Hermes
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -131,6 +134,9 @@ func main() {
 		switch args[0] {
 		case "go", "recap", "resume", "show", "why", "label":
 			runAction(args[0], args[1:])
+			return
+		case "update":
+			runUpdate()
 			return
 		}
 	}
@@ -257,6 +263,27 @@ func main() {
 		fmt.Print(render.Table(b, theme, render.Opts{
 			Long: longView, Expand: expand, Width: width, Home: home}))
 	}
+}
+
+// runUpdate is the one deliberately networked path. The board and every
+// observation mode stay zero-network (enforced by the no-network CI job); this
+// shells out to the Go toolchain to reinstall agentdash, and only ever when the
+// user explicitly types `agentdash update`. It reuses the running binary's build
+// tags, so a Hermes build self-updates with -tags=hermes and keeps monitoring.
+func runUpdate() {
+	args := render.UpdateArgs()
+	if _, err := exec.LookPath("go"); err != nil {
+		fmt.Fprintf(os.Stderr, "agentdash: the `go` toolchain isn't on PATH; reinstall manually:\n  %s\n", render.UpdateCmd())
+		os.Exit(1)
+	}
+	fmt.Fprintf(os.Stderr, "agentdash: %s\n", render.UpdateCmd())
+	cmd := exec.Command("go", args...)
+	cmd.Stdout, cmd.Stderr, cmd.Stdin = os.Stdout, os.Stderr, os.Stdin
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "agentdash: update failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Fprintln(os.Stderr, "agentdash: updated · run `agentdash --version` to confirm")
 }
 
 // runAction handles the pid-addressed subcommands and recap.
