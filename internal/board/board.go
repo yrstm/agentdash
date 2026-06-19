@@ -164,6 +164,19 @@ func Collect(now int64, opt Options) *Board {
 		}
 		return c
 	}
+	// codexPath resolves a codex process to its rollout: an open fd is exact and
+	// catches resumed sessions (whose filename timestamp predates the process),
+	// otherwise fall back to the start-time match. Shared by the scan pass and
+	// the pairing pass so the two never disagree.
+	codexPath := func(p procs.Proc) (path string, sure bool, how string) {
+		if fp := procs.CodexFDSession(p.PID); fp != "" {
+			return fp, true, "fd"
+		}
+		if mp, ok := procs.MatchCodex(codexRollouts(p.Cwd), p.Start); ok {
+			return mp, ok, "meta"
+		}
+		return "", false, ""
+	}
 
 	// resolve every pairing first so the session files can be scanned in
 	// one parallel pass; on a cold cache the wall time is the largest
@@ -181,7 +194,7 @@ func Collect(now int64, opt Options) *Board {
 		case isExternalKind(p.Kind):
 			// read directly from its own store below, not the codex locator
 		default:
-			if path, ok := procs.MatchCodex(codexRollouts(p.Cwd), p.Start); ok {
+			if path, _, _ := codexPath(p); path != "" {
 				scanJobs[path] = p.Kind
 			}
 		}
@@ -237,14 +250,15 @@ func Collect(now int64, opt Options) *Board {
 					pairing, _ = externalPair(p, h, cache, newPidMap, repos, &row)
 				}
 			default:
-				// codex pairs only when a rollout's start lines up with this
-				// process; a same-cwd-only match is rejected so old processes in a
-				// busy cwd (e.g. ~) don't inherit the newest unrelated rollout.
-				if path, sure := procs.MatchCodex(codexRollouts(p.Cwd), p.Start); path != "" {
-					pairing = procs.Pairing{Path: path, Sure: sure, How: "meta"}
+				// codex pairs on an open rollout fd (exact; catches resumed
+				// sessions) or a start-time match. A same-cwd-only match is
+				// rejected so old processes in a busy cwd (e.g. ~) don't inherit
+				// the newest unrelated rollout.
+				if path, sure, how := codexPath(p); path != "" {
+					pairing = procs.Pairing{Path: path, Sure: sure, How: how}
 					newPidMap[strconv.Itoa(p.PID)] = parse.PidInfo{
 						Path: path, Start: float64(p.Start), Sure: sure,
-						Cwd: p.Cwd, How: "meta", Kind: p.Kind}
+						Cwd: p.Cwd, How: how, Kind: p.Kind}
 				}
 			}
 			row.Task = noSession

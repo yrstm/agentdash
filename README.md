@@ -240,9 +240,11 @@ Pairing a process to a session file walks an evidence chain: an open fd
 in /proc, then a unique session file in the project dir for the process
 cwd, then a first-entry timestamp within 5 minutes of process start,
 then a sticky previous guess, then the newest unclaimed recent file
-(the last two are heuristic and marked `?`). Codex sessions record
-their cwd and start time in the rollout file, which pairs them
-directly. `agentdash why <row>` prints which tier applied.
+(the last two are heuristic and marked `?`). Codex sessions pair on an
+open rollout fd first (exact, and the only thing that catches a
+`codex resume`, whose rollout filename keeps its original start time),
+otherwise on the cwd and start time recorded in the rollout file.
+`agentdash why <row>` prints which tier applied.
 
 Status: file written under 60s ago is `working`; over 10 minutes quiet is
 `idle`; in between, `waiting` if the last entry is an assistant turn, else

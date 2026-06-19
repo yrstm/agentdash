@@ -247,6 +247,32 @@ func CodexRollouts(home, cwd string) []CodexRollout {
 	return out
 }
 
+// CodexFDSession is exact evidence: the process holds a codex rollout jsonl
+// open under ~/.codex/sessions. This is how *resumed* sessions pair — a
+// `codex resume` rollout keeps its original creation timestamp in the filename,
+// far from the resume process's start, so MatchCodex's start-time window misses
+// it; the held fd does not. Mirrors fdSession but matches any rollout, since a
+// resumed session's cwd need not equal the rollout's recorded cwd.
+func CodexFDSession(pid int) string {
+	dir := filepath.Join(Root(), strconv.Itoa(pid), "fd")
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, de := range des {
+		t, err := os.Readlink(filepath.Join(dir, de.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(t, "/.codex/sessions/") &&
+			strings.HasPrefix(filepath.Base(t), "rollout-") &&
+			strings.HasSuffix(t, ".jsonl") {
+			return t
+		}
+	}
+	return ""
+}
+
 // MatchCodex pairs a process to the cwd's rollout whose filename timestamp is
 // closest to the process start, within TSSlack. A same-cwd match WITHOUT a
 // timestamp match is rejected: an old process in a busy cwd (e.g. ~, shared by
