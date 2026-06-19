@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/term"
@@ -102,6 +103,8 @@ usage: agentdash [flags | subcommand]
   --on-stuck <cmd>      with -w: like --on-needs-you, when status hits stuck?
   --any-waiting      exit 0 if any session needs you, 1 otherwise (for scripts)
   go [row|pid]       jump to the agent's tmux pane (no arg: first that needs you)
+  enter <row|pid>    go to a live session, or revive a dormant one in a new tmux
+                     window (exec-replace when not in tmux)
   show <row|pid>     drill-down: task, recent turns, session path, resume command
   why <row|pid>      provenance per cell: pairing evidence, value sources
   label <row|pid> <text>   set a persistent TASK label ("" clears)
@@ -137,6 +140,9 @@ func main() {
 			return
 		case "update":
 			runUpdate()
+			return
+		case "enter":
+			runEnter(args[1:])
 			return
 		}
 	}
@@ -262,6 +268,61 @@ func main() {
 		}
 		fmt.Print(render.Table(b, theme, render.Opts{
 			Long: longView, Expand: expand, Width: width, Home: home}))
+	}
+}
+
+// runEnter drops you into a session: if it is already live in a tmux pane it
+// just switches there (spawns nothing); otherwise it revives the session from
+// its resume command. Inside tmux that opens a NEW window — tmux owns the
+// process and the board stays in view, preserving "agentdash never owns
+// sessions"; outside tmux it exec-replaces, handing the terminal over without
+// becoming the session's parent.
+func runEnter(rest []string) {
+	if len(rest) == 0 || rest[0] == "" {
+		fmt.Fprintln(os.Stderr, "agentdash: enter needs a row number or pid")
+		os.Exit(2)
+	}
+	now := time.Now().Unix()
+	b := board.Collect(now, board.Options{})
+	pid, _ := strconv.Atoi(rest[0])
+	if n, err := strconv.Atoi(rest[0]); err == nil && n >= 1 && n <= len(b.Rows) {
+		pid = b.Rows[n-1].PID
+	}
+
+	// already live in a tmux pane: switch to it, exactly like `go`
+	tty := ""
+	for _, r := range b.Rows {
+		if r.PID == pid {
+			tty = r.TTY
+		}
+	}
+	if pane, ok := board.PaneForTTY("/dev/" + tty); ok && os.Getenv("TMUX") != "" {
+		if err := exec.Command("tmux", "switch-client", "-t", pane.Session, ";",
+			"select-window", "-t", pane.Session+":"+pane.Window, ";",
+			"select-pane", "-t", pane.PaneID).Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "agentdash: tmux jump failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// dormant or detached: revive from the resume command
+	mi, _, err := board.PidEntry(board.LoadCacheForActions(), pid)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	resume := board.ResumeCmd(mi)
+	if os.Getenv("TMUX") != "" {
+		if err := exec.Command("tmux", "new-window", resume).Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "agentdash: tmux new-window failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	if err := syscall.Exec("/bin/sh", []string{"sh", "-c", resume}, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "agentdash: exec failed: %v\n", err)
+		os.Exit(1)
 	}
 }
 
