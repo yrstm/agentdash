@@ -110,8 +110,10 @@ usage: agentdash [flags | subcommand]
   label <row|pid> <text>   set a persistent TASK label ("" clears)
   resume <row|pid>   print the ` + "`claude --resume`" + ` command (with cwd)
   recap [4h|30m|2d]  what changed since you last looked (default: last recap)
-  memory [repo|.]    agent-memory drift: no arg = cross-project health board;
-                     a repo = its CLAUDE.md/AGENTS.md change log (local, sampled)
+  memory [repo|.] [--json]
+                     agent-memory drift: no arg = cross-project health board;
+                     a repo = its CLAUDE.md/AGENTS.md change log (local, sampled;
+                     --json emits schema_version 1 for tooling)
   update             reinstall the latest from @main — the ONE networked
                      command (the board itself never touches the network);
                      keeps your build tags, so Hermes stays Hermes
@@ -276,21 +278,51 @@ func main() {
 // runMemory drives the `agentdash memory` subcommand: with no argument it shows
 // the cross-project memory-health board (most-stale first); with a repo path or
 // "." it shows that project's memory change log. Both sample fresh first, so an
-// explicit inspection always reflects the current files.
+// explicit inspection always reflects the current files. --json emits a stable
+// schema_version 1 document for tooling instead of the table.
 func runMemory(rest []string) {
-	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	jsonMode := false
+	repoArg := ""
+	for _, a := range rest {
+		if a == "--json" {
+			jsonMode = true
+		} else if repoArg == "" && a != "" {
+			repoArg = a
+		}
+	}
+	theme := render.NewTheme(jsonMode || !term.IsTerminal(int(os.Stdout.Fd())))
 	now := time.Now()
 	logPath := memory.LogPath()
 	live := board.MemoryProjects(now.Unix())
 
-	if len(rest) > 0 && rest[0] != "" {
-		proj := resolveProject(rest[0])
+	if repoArg != "" {
+		proj := resolveProject(repoArg)
 		memory.Sample(logPath, map[string]int{proj: live[proj]}, now)
-		fmt.Print(render.MemoryLog(proj, memory.ProjectLog(logPath, proj), theme))
+		entries := memory.ProjectLog(logPath, proj)
+		if jsonMode {
+			out, err := memory.LogJSON(proj, entries, now)
+			emitJSON(out, err)
+			return
+		}
+		fmt.Print(render.MemoryLog(proj, entries, theme))
 		return
 	}
 	memory.Sample(logPath, live, now)
-	fmt.Print(render.MemoryBoard(memory.BuildBoard(logPath, live, now), theme))
+	rows := memory.BuildBoard(logPath, live, now)
+	if jsonMode {
+		out, err := memory.BoardJSON(rows, now)
+		emitJSON(out, err)
+		return
+	}
+	fmt.Print(render.MemoryBoard(rows, theme))
+}
+
+func emitJSON(out []byte, err error) {
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "agentdash:", err)
+		os.Exit(1)
+	}
+	fmt.Println(string(out))
 }
 
 // resolveProject maps a memory argument ("." or a path) to a project root.

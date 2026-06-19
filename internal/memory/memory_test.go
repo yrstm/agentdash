@@ -1,11 +1,53 @@
 package memory
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestJSONShape(t *testing.T) {
+	now := time.Now()
+
+	// empty board -> projects is [] not null, schema_version 1
+	out, err := BoardJSON(nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"projects": []`) || !strings.Contains(string(out), `"schema_version": 1`) {
+		t.Fatalf("empty board JSON wrong:\n%s", out)
+	}
+
+	// a populated board round-trips with the derived fields
+	out, _ = BoardJSON([]BoardRow{{
+		Project: "/p", Files: []string{"CLAUDE.md", "AGENTS.md"}, MemAgeS: 600,
+		WorkAgeS: 60, WorkSrc: "git", Dirty: true, Stale: true, Concurrent: true,
+	}}, now)
+	var bd boardDoc
+	if err := json.Unmarshal(out, &bd); err != nil {
+		t.Fatal(err)
+	}
+	if len(bd.Projects) != 1 {
+		t.Fatalf("want 1 project, got %d", len(bd.Projects))
+	}
+	p := bd.Projects[0]
+	if !p.Stale || !p.Concurrent || !p.Dirty || p.WorkSource != "git" || p.MemoryAgeS != 600 {
+		t.Errorf("board project fields wrong: %+v", p)
+	}
+
+	// log JSON carries the derived label
+	out, _ = LogJSON("/p", []LogEntry{{Event: Event{TS: "t", Path: "/p/CLAUDE.md", Kind: "claude", Bytes: 10}, Label: "grew"}}, now)
+	var ld logDoc
+	if err := json.Unmarshal(out, &ld); err != nil {
+		t.Fatal(err)
+	}
+	if ld.SchemaVersion != 1 || len(ld.Events) != 1 || ld.Events[0].Label != "grew" {
+		t.Fatalf("log JSON wrong: %+v", ld)
+	}
+}
 
 func write(t *testing.T, path, content string) {
 	t.Helper()
