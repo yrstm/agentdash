@@ -90,7 +90,6 @@ agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
 agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
-agentdash update           reinstall the latest from @main (keeps your build tags)
 ```
 
 ### Memory drift (`agentdash memory`)
@@ -117,14 +116,17 @@ prints that project's change log, newest last, each entry labelled
 read-only toward your files; the scope is deliberately tight (repo-root files,
 never a filesystem crawl).
 
-### Updating (`agentdash update`)
+### Updating
 
-`agentdash update` reinstalls the latest from `@main` for you, reusing the
-build tags of the running binary — so a Hermes build self-updates with
-`-tags=hermes` and keeps session monitoring. It is the one command that touches
-the network (it shells out to `go install`); the live board and every other mode
-stay zero-network. The plain board also shows the binary's build age and nudges
-you to update once it crosses `AGENTDASH_STALE_DAYS` (default 14).
+agentdash has no self-update command — the binary never touches the network.
+Instead the plain board shows the running binary's build age (from its embedded
+VCS stamp) and, once it crosses `AGENTDASH_STALE_DAYS` (default 14), *prints* the
+reinstall command — carrying the build tags it was built with, so a Hermes build
+tells you to reinstall with `-tags=hermes`. You run it yourself:
+
+```
+go install -tags=hermes github.com/yrstm/agentdash/cmd/agentdash@main
+```
 
 ### Watch mode keys
 
@@ -166,9 +168,7 @@ agentdash -w --on-stuck <cmd>       run <cmd> when an agent's status becomes stu
 The command runs through `sh -c`, so quote it as one argument. It fires
 once on the *transition into* the state (not repeatedly while it lasts),
 and only with `-w`. agentdash itself opens no socket and makes no network
-call; your command is what reaches out. (The sole exception anywhere is the
-explicit `agentdash update`, which shells out to `go install` to reinstall
-itself — the board and every observation mode stay zero-network.)
+call anywhere; your command is what reaches out.
 
 Each invocation receives the agent as JSON on **stdin** — one object,
 byte-identical to an entry in the `agents` array of `agentdash --json`,

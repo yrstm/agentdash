@@ -9,20 +9,17 @@ import (
 
 const updateModule = "github.com/yrstm/agentdash/cmd/agentdash@main"
 
-// UpdateArgs is the `go` argv (after the leading "go") that reinstalls agentdash
-// with the same build tags as the running binary — so a Hermes build self-updates
-// with -tags=hermes and keeps session monitoring. Shared by the staleness hint
-// and the `update` subcommand so the two can never drift.
-func UpdateArgs() []string {
-	args := []string{"install"}
+// UpdateCmd is the reinstall command the staleness nudge prints. It carries the
+// running binary's build tags (updateTags), so a Hermes build advertises
+// -tags=hermes and a reinstall keeps session monitoring. agentdash never runs
+// this itself — it only ever prints it, keeping the binary fully no-network.
+func UpdateCmd() string {
+	tags := ""
 	if t := strings.TrimSpace(updateTags); t != "" {
-		args = append(args, t)
+		tags = " " + t
 	}
-	return append(args, updateModule)
+	return "go install" + tags + " " + updateModule
 }
-
-// UpdateCmd is the human-readable form of UpdateArgs.
-func UpdateCmd() string { return "go " + strings.Join(UpdateArgs(), " ") }
 
 // UpdateHint is the no-network staleness nudge shown under the banner: how old
 // the running binary is and, once it crosses staleDays, the reinstall command.
@@ -43,8 +40,8 @@ func UpdateHint(t Theme, rev string, dirty bool, ageSecs int64, staleDays int) s
 	}
 	out := fmt.Sprintf("  %s▸%s %sbuild %s · %s old%s\n", t.V, t.N, t.D, stamp, parse.Ago(ageSecs), t.N)
 	if days := ageSecs / 86400; days >= int64(staleDays) {
-		out += fmt.Sprintf("  %s▸%s %s↑ %dd since build — run %sagentdash update%s%s (or %s)%s\n",
-			t.V, t.N, t.Y, days, t.B, t.N, t.Y, UpdateCmd(), t.N)
+		out += fmt.Sprintf("  %s▸%s %s↑ %dd since build — reinstall: %s%s%s\n",
+			t.V, t.N, t.Y, days, t.B, UpdateCmd(), t.N)
 	}
 	return out
 }
