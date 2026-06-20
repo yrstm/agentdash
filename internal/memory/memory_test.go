@@ -163,7 +163,7 @@ func TestLabels(t *testing.T) {
 		cur  Event
 		want string
 	}{
-		{nil, base, "created"},
+		{nil, base, "baseline"},
 		{&Event{Bytes: 50}, Event{Bytes: 100}, "grew"},
 		{&Event{Bytes: 100}, Event{Bytes: 50}, "shrunk"},
 		{&Event{Bytes: 100, SHA256: "a"}, Event{Bytes: 100, SHA256: "b"}, "same-size-rewrite"},
@@ -191,7 +191,7 @@ func TestProjectLogDerivesLabelsPerPath(t *testing.T) {
 	if len(log) != 3 {
 		t.Fatalf("got %d log entries, want 3", len(log))
 	}
-	want := []string{"created", "grew", "shrunk"}
+	want := []string{"baseline", "grew", "shrunk"}
 	for i, e := range log {
 		if e.Label != want[i] {
 			t.Errorf("entry %d label = %q, want %q", i, e.Label, want[i])

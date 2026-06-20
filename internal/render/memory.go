@@ -61,13 +61,13 @@ func MemoryLog(project string, entries []memory.LogEntry, t Theme) string {
 			t.D, when, t.N, e.Kind, filepath.Base(e.Path),
 			labelColor(t, e.Label), e.Label, t.N, parse.Hum(e.Bytes), flag)
 	}
-	fmt.Fprintf(&b, "\n  %snewest last · labels: created/grew/shrunk/same-size-rewrite%s\n", t.D, t.N)
+	fmt.Fprintf(&b, "\n  %snewest last · labels: baseline/grew/shrunk/same-size-rewrite%s\n", t.D, t.N)
 	return b.String()
 }
 
 func labelColor(t Theme, label string) string {
 	switch label {
-	case "created":
+	case "baseline":
 		return t.G
 	case "grew":
 		return t.B

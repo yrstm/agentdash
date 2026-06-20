@@ -112,9 +112,30 @@ when available, else file mtime), flags `stale` and — when a memory change
 landed while two or more live sessions shared the project — `⚠concurrent`
 (a mechanical risk signal, not proven authorship). `agentdash memory <repo|.>`
 prints that project's change log, newest last, each entry labelled
-`created` / `grew` / `shrunk` / `same-size-rewrite`. Local only, no network,
-read-only toward your files; the scope is deliberately tight (repo-root files,
-never a filesystem crawl).
+`baseline` (the first time agentdash observed the file — it did not create it),
+`grew`, `shrunk`, or `same-size-rewrite`. `--json` emits the same data as a
+stable `schema_version: 1` document (cross-project board, or per-project log).
+
+**Exactly what it samples.** Repo-root `CLAUDE.md` and `AGENTS.md` only — no
+recursive crawl, no other markdown, no subdirectories. It reads each file only
+to hash it; **file contents are never stored.** Each appended log row holds:
+`project` path, `path`, `kind`, `bytes`, `sha256`, `mtime`, sample `ts`, and the
+live-`sessions` count at sample time — metadata and a hash, nothing more.
+
+**Log location & retention.** The log is a single append-only JSONL file at:
+
+```
+~/.cache/agentdash/memory-log.jsonl
+```
+
+It is **never pruned** — that is the point (long-term history) — so it grows by
+one line per real content change. It records no file contents, but project paths
+and names can themselves be sensitive; the file stays local and is yours to
+delete. (A future `agentdash memory compact` / `--forget <repo>` could trim it;
+not built yet.)
+
+Local only, no network, read-only toward your files; the scope is deliberately
+tight (repo-root files, never a filesystem crawl).
 
 ### Updating
 

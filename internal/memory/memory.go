@@ -172,11 +172,13 @@ func ProjectLog(logPath, project string) []LogEntry {
 }
 
 // LabelFor classifies an event against the previous one for the same path. With
-// only bytes+hash we keep four honest, mechanical labels.
+// only bytes+hash we keep four honest, mechanical labels. The first event is
+// "baseline" (not "created"): agentdash records when it first *observed* a file,
+// which is usually not when the file was created.
 func LabelFor(prev *Event, cur Event) string {
 	switch {
 	case prev == nil:
-		return "created"
+		return "baseline"
 	case cur.Bytes > prev.Bytes:
 		return "grew"
 	case cur.Bytes < prev.Bytes:
