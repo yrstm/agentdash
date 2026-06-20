@@ -3,11 +3,56 @@ package memory
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestGitSignalDoesNotRunFsmonitor locks in the hardening: a malicious repo's
+// core.fsmonitor must not execute when agentdash samples it. Self-validating —
+// it first confirms the vector is live in this git, then asserts gitSignal stays
+// safe, so removing `-c core.fsmonitor=false` would fail this test.
+func TestGitSignalDoesNotRunFsmonitor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "PWNED")
+	git := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=a", "GIT_AUTHOR_EMAIL=a@b",
+			"GIT_COMMITTER_NAME=a", "GIT_COMMITTER_EMAIL=a@b")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	if err := os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-qm", "seed")
+	git("config", "core.fsmonitor", "sh -c 'touch "+marker+"'")
+
+	// confirm the vector is live: an unhardened status would run fsmonitor
+	_ = exec.Command("git", "-C", repo, "status", "--porcelain").Run()
+	if _, err := os.Stat(marker); err != nil {
+		t.Skip("fsmonitor vector inert in this git; assertion would be vacuous")
+	}
+	_ = os.Remove(marker) // reset before the real check
+
+	ts, _, ok := gitSignal(repo)
+	if !ok || ts == 0 {
+		t.Fatalf("gitSignal failed on a valid repo: ok=%v ts=%d", ok, ts)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("SECURITY REGRESSION: gitSignal executed the repo's core.fsmonitor")
+	}
+}
 
 func TestJSONShape(t *testing.T) {
 	now := time.Now()

@@ -14,7 +14,7 @@ processes on a Linux box: what each one is working on, what model it is
 on, how full its context is, and whether it is blocked waiting on you.
 `-w` turns the table into a small interactive TUI.
 
-It is a single static binary with zero runtime dependencies, reading
+It is a single static binary (no cgo, no runtime services), reading
 the session files agent CLIs already write locally (Claude Code and
 Codex are supported; adding another agent is a small parser, see
 CONTRIBUTING.md) and /proc directly. No daemon, no server, no API
@@ -43,10 +43,18 @@ brew install yrstm/agentdash/agentdash
 go install github.com/yrstm/agentdash/cmd/agentdash@latest
 ```
 
-It is a single static binary with zero runtime dependencies. Optional:
-tmux (pane jumping, attachment glyphs), docker (sandbox section, skipped
-if absent), jq (only for the integrations). The auditable v1 bash
-version lives in `legacy/` and keeps working.
+It is a single static binary with no cgo and no runtime services.
+Optional at runtime: tmux (pane jumping, attachment glyphs), docker
+(sandbox section, skipped if absent), jq (only for the integrations).
+The auditable v1 bash version lives in `legacy/` and keeps working.
+
+It is **not** dependency-light at build time, and shouldn't be sold as
+such: the default CLI compiles a Bubble Tea / Lipgloss terminal stack for
+watch mode — roughly 230 packages from 23 modules, against a ~57-module
+resolution graph — and `-tags=hermes` adds the pure-Go modernc SQLite
+driver (~7 more modules). The one-shot board and the parsers are close to
+standard-library only; almost the entire third-party surface is the `-w`
+TUI.
 
 ### Optional: Hermes (SQLite-backed agents)
 
