@@ -233,52 +233,92 @@ func procTickDuration() time.Duration {
 	return d
 }
 
-// readKeys decodes stdin bytes into key tokens. Terminals deliver an escape
-// sequence (arrows) in a single read, so decoding the whole buffer is enough.
+const escTimeout = 50 * time.Millisecond
+
+// readKeys decodes stdin into key tokens. A keyDecoder buffers a partial escape
+// or UTF-8 sequence across reads (an arrow can split between reads); a short idle
+// timeout flushes a held lone ESC so the Esc key stays responsive.
 func readKeys(r io.Reader, ch chan<- key) {
-	buf := make([]byte, 64)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			decodeKeys(buf[:n], ch)
+	raw := make(chan []byte, 8)
+	go func() {
+		buf := make([]byte, 64)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				b := make([]byte, n)
+				copy(b, buf[:n])
+				raw <- b
+			}
+			if err != nil {
+				close(raw)
+				return
+			}
 		}
-		if err != nil {
-			close(ch)
-			return
+	}()
+	var d keyDecoder
+	for {
+		var idle <-chan time.Time
+		if len(d.pending) > 0 {
+			idle = time.After(escTimeout)
+		}
+		select {
+		case b, ok := <-raw:
+			if !ok {
+				close(ch)
+				return
+			}
+			d.feed(b, ch)
+		case <-idle:
+			d.flush(ch)
 		}
 	}
 }
 
-func decodeKeys(b []byte, ch chan<- key) {
-	for i := 0; i < len(b); {
-		c := b[i]
-		switch {
+// keyDecoder turns raw bytes into key tokens, holding an incomplete trailing
+// escape or UTF-8 sequence in pending until the rest of it arrives.
+type keyDecoder struct{ pending []byte }
+
+func (d *keyDecoder) feed(b []byte, ch chan<- key) {
+	buf := append(d.pending, b...)
+	i := 0
+decode:
+	for i < len(buf) {
+		switch c := buf[i]; {
 		case c == 0x1b: // escape
-			if i+2 < len(b) && b[i+1] == '[' {
-				switch b[i+2] {
-				case 'A':
-					ch <- key{name: "up"}
-				case 'B':
-					ch <- key{name: "down"}
-				case 'C':
-					ch <- key{name: "right"}
-				case 'D':
-					ch <- key{name: "left"}
-				}
-				if b[i+2] >= 'A' && b[i+2] <= 'D' {
-					i += 3
-					continue
-				}
-				// other CSI: skip to the final byte
-				j := i + 2
-				for j < len(b) && !(b[j] >= 0x40 && b[j] <= 0x7e) {
-					j++
-				}
-				i = j + 1
+			if i+1 >= len(buf) {
+				break decode // hold a lone ESC: a CSI may still be arriving
+			}
+			if buf[i+1] != '[' {
+				ch <- key{name: "esc"}
+				i++
 				continue
 			}
-			ch <- key{name: "esc"}
-			i++
+			if i+2 >= len(buf) {
+				break decode // hold "ESC ["
+			}
+			switch buf[i+2] {
+			case 'A':
+				ch <- key{name: "up"}
+				i += 3
+			case 'B':
+				ch <- key{name: "down"}
+				i += 3
+			case 'C':
+				ch <- key{name: "right"}
+				i += 3
+			case 'D':
+				ch <- key{name: "left"}
+				i += 3
+			default: // other CSI: skip to the final byte (@–~), emit nothing
+				j := i + 2
+				for j < len(buf) && (buf[j] < 0x40 || buf[j] > 0x7e) {
+					j++
+				}
+				if j >= len(buf) {
+					break decode // hold an incomplete CSI
+				}
+				i = j + 1
+			}
 		case c == '\r' || c == '\n':
 			ch <- key{name: "enter"}
 			i++
@@ -294,16 +334,31 @@ func decodeKeys(b []byte, ch chan<- key) {
 		case c >= 0x20 && c < 0x7f:
 			ch <- key{name: string(rune(c)), r: rune(c), printable: true}
 			i++
-		default: // UTF-8 multibyte (printable) or unknown control
-			r, size := utf8.DecodeRune(b[i:])
-			if r != utf8.RuneError && size > 1 {
+		case c >= 0x80: // UTF-8 multibyte, possibly split across reads
+			if !utf8.FullRune(buf[i:]) {
+				break decode // hold a partial rune
+			}
+			r, size := utf8.DecodeRune(buf[i:])
+			if r == utf8.RuneError {
+				i++
+			} else {
 				ch <- key{name: string(r), r: r, printable: true}
 				i += size
-			} else {
-				i++
 			}
+		default:
+			i++ // other control bytes: skip
 		}
 	}
+	d.pending = append(d.pending[:0], buf[i:]...)
+}
+
+// flush emits a held lone ESC as the Esc key after the idle timeout, and drops
+// any stale partial sequence.
+func (d *keyDecoder) flush(ch chan<- key) {
+	if len(d.pending) > 0 && d.pending[0] == 0x1b {
+		ch <- key{name: "esc"}
+	}
+	d.pending = d.pending[:0]
 }
 
 // repaint writes the current frame, translating to raw-mode line endings and
