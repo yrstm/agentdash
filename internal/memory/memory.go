@@ -271,7 +271,17 @@ func gitSignal(project string) (ts int64, dirty, ok bool) {
 	if _, err := os.Stat(filepath.Join(project, ".git")); err != nil {
 		return 0, false, false
 	}
-	out, err := exec.Command("git", "-C", project, "log", "-1", "--format=%ct").Output()
+	// project is an untrusted directory (a live agent's cwd, or a CLI arg), so
+	// harden the git calls: `-c core.fsmonitor=false` stops a malicious repo's
+	// config from executing a filesystem-monitor command during `status`, and
+	// GIT_OPTIONAL_LOCKS=0 keeps this read-only sampling from writing or locking
+	// the repo. CLI `-c` overrides the repo-local config, which is the vector.
+	gitCmd := func(args ...string) *exec.Cmd {
+		c := exec.Command("git", append([]string{"-c", "core.fsmonitor=false", "-C", project}, args...)...)
+		c.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+		return c
+	}
+	out, err := gitCmd("log", "-1", "--format=%ct").Output()
 	if err != nil {
 		return 0, false, false
 	}
@@ -279,7 +289,7 @@ func gitSignal(project string) (ts int64, dirty, ok bool) {
 	if err != nil {
 		return 0, false, false
 	}
-	stat, _ := exec.Command("git", "-C", project, "status", "--porcelain").Output()
+	stat, _ := gitCmd("status", "--porcelain").Output()
 	return t, strings.TrimSpace(string(stat)) != "", true
 }
 
