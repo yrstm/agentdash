@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/yrstm/agentdash/internal/board"
 	"github.com/yrstm/agentdash/internal/render"
 )
@@ -28,7 +27,7 @@ func TestViewClipsToWidth(t *testing.T) {
 			cfg: Config{Theme: render.NewTheme(false)}, // color on -> ANSI in the lines
 		}
 		for i, ln := range strings.Split(m.View(), "\n") {
-			if w := ansi.StringWidth(ln); w > width {
+			if w := render.VisibleWidth(ln); w > width {
 				t.Errorf("width=%d: line %d is %d cols (wraps): %q", width, i, w, ln)
 			}
 		}

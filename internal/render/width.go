@@ -3,13 +3,78 @@ package render
 import (
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 )
 
+// escEnd returns the index just past the escape sequence starting at s[i]
+// (i points at ESC). Handles CSI (ESC [ … final) and the simple two-byte form.
+func escEnd(s string, i int) int {
+	if i+1 >= len(s) {
+		return i + 1
+	}
+	if s[i+1] == '[' { // CSI: params until a final byte in @–~
+		j := i + 2
+		for j < len(s) {
+			if c := s[j]; c >= 0x40 && c <= 0x7e {
+				return j + 1
+			}
+			j++
+		}
+		return j
+	}
+	return i + 2
+}
+
+// VisibleWidth is the display width of s in terminal cells, ignoring ANSI escape
+// sequences (SGR colors etc.). Replaces ansi.StringWidth — no charm dependency.
+func VisibleWidth(s string) int {
+	w := 0
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			i = escEnd(s, i)
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		w += runewidth.RuneWidth(r)
+		i += size
+	}
+	return w
+}
+
+// ClipANSI truncates s to w display cells, copying ANSI escape sequences through
+// verbatim (they cost no width) so colors survive the cut. Replaces
+// ansi.Truncate(s, w, ""): no ellipsis, never exceeds w visible cells.
+func ClipANSI(s string, w int) string {
+	if VisibleWidth(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	width := 0
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b {
+			j := escEnd(s, i)
+			b.WriteString(s[i:j])
+			i = j
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		rw := runewidth.RuneWidth(r)
+		if width+rw > w {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+		i += size
+	}
+	return b.String()
+}
+
 // Display-width helpers: pad and truncate by terminal cells, not bytes,
-// so ×, … and CJK glyphs keep the columns aligned. go-runewidth ships
-// with lipgloss already; no new module.
+// so ×, … and CJK glyphs keep the columns aligned. go-runewidth is the one
+// piece of the old TUI stack kept on purpose — Unicode alignment is easy to
+// get subtly wrong by hand.
 
 // Pad right-pads s to w display cells.
 func Pad(s string, w int) string {
