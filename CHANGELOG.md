@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- `agentdash memory`: a local agent-memory drift tracker. Every run samples
+  repo-root `CLAUDE.md` / `AGENTS.md` for projects with a live session (mtime/size
+  short-circuit before hashing) and appends to a never-pruned log at
+  `~/.cache/agentdash/memory-log.jsonl` only when the content hash changes. It
+  stores a hash and metadata — never file contents. `agentdash memory` shows a
+  cross-project staleness board (`stale` / `⚠concurrent` flags); `agentdash
+  memory <repo|.>` shows that project's change log labelled `baseline` / `grew` /
+  `shrunk` / `same-size-rewrite`; `--json` emits a `schema_version: 1` document.
+- Watch mode (`-w`) no longer uses Bubble Tea / the Charmbracelet stack — it is a
+  small raw-terminal loop over the existing renderer (split escape/UTF-8 reads
+  handled, `Esc` flushed on idle). Same keys, no mouse. This drops the default
+  build to ~201 compiled packages / 15 non-stdlib / 6 third-party modules and a
+  30-module resolution graph (from ~230 / 53 / 23 / 57).
+- Removed the `agentdash update` subcommand. The binary now makes **no network
+  call anywhere**; the build-age staleness nudge stays but only *prints* the
+  reinstall command (still tag-aware).
+- codex: resumed sessions (`codex resume`) now pair by their open rollout fd, so
+  they appear on the board instead of showing as "unmatched".
+- Hardened the `git` calls behind `agentdash memory` against untrusted repos
+  (`-c core.fsmonitor=false`, `GIT_OPTIONAL_LOCKS=0`) with a regression test.
+- The default build no longer compiles the modernc SQLite driver; it remains in
+  the root module graph (a `go.mod` requirement) until Hermes is split out.
+
 - Event hooks: `agentdash -w --on-needs-you <cmd>` and `--on-stuck <cmd>` run
   a command of yours once when an agent enters a needs-you state or goes
   `stuck?`. The agent row arrives as JSON on stdin (same shape as `--json`),

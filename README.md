@@ -48,13 +48,16 @@ Optional at runtime: tmux (pane jumping, attachment glyphs), docker
 (sandbox section, skipped if absent), jq (only for the integrations).
 The auditable v1 bash version lives in `legacy/` and keeps working.
 
-It is **not** dependency-light at build time, and shouldn't be sold as
-such: the default CLI compiles a Bubble Tea / Lipgloss terminal stack for
-watch mode — roughly 230 packages from 23 modules, against a ~57-module
-resolution graph — and `-tags=hermes` adds the pure-Go modernc SQLite
-driver (~7 more modules). The one-shot board and the parsers are close to
-standard-library only; almost the entire third-party surface is the `-w`
-TUI.
+Dependency footprint (measured with `go list -buildvcs=false`; absolute package
+counts vary a little by Go toolchain): the default build is **~201 compiled
+packages, 15 non-stdlib, 6 third-party modules**, against a **30-module
+resolution graph** (`go list -m all`). Watch mode is a small raw-terminal loop —
+no Bubble Tea / Charm stack — so the only third-party code in the default binary
+is `go-runewidth` (Unicode column alignment) plus `golang.org/x/term`/`x/sys`.
+`-tags=hermes` adds the pure-Go modernc SQLite driver. Note: the default build
+does **not compile** modernc, but `modernc.org/sqlite` is a direct `go.mod`
+requirement, so it **remains in the module resolution graph** until Hermes is
+split into its own module.
 
 ### Optional: Hermes (SQLite-backed agents)
 
