@@ -136,7 +136,9 @@ func Run(cfg Config) error {
 	}
 	defer func() { _ = term.Restore(inFd, old) }()
 	out := os.Stdout
-	_, _ = io.WriteString(out, "\x1b[?1049h\x1b[?25l")        // alt screen, hide cursor
+	// alt screen, clear it, home the cursor, hide the cursor — a clean first
+	// frame regardless of where the cursor sat or what the alt buffer held.
+	_, _ = io.WriteString(out, "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
 	defer func() { _, _ = io.WriteString(out, "\x1b[?25h\x1b[?1049l") }()
 
 	m := &model{
