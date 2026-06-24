@@ -112,6 +112,20 @@ func TestFindFallsBackToCwdAndStartHeuristic(t *testing.T) {
 	}
 }
 
+func TestFindExcludeSkipsClaimedSession(t *testing.T) {
+	path := makeDB(t) // one active session: sess_dummy_123, cwd /work/dummy
+	if _, ok := Find(path, Query{Cwd: "/work/dummy", Start: 1008}); !ok {
+		t.Fatal("expected heuristic match without exclude")
+	}
+	ex := map[string]bool{"sess_dummy_123": true}
+	if s, ok := Find(path, Query{Cwd: "/work/dummy", Start: 1008, Exclude: ex}); ok {
+		t.Fatalf("excluded session must not match heuristically, got %q", s.ID)
+	}
+	if _, ok := Find(path, Query{SessionID: "sess_dummy_123", Exclude: ex}); ok {
+		t.Fatal("excluded exact id must not match")
+	}
+}
+
 func TestKeyRoundTripKeepsDBPathAndSessionID(t *testing.T) {
 	key := Key("/tmp/hermes/state.db", "sess_dummy_123")
 	db, id, ok := SplitKey(key)

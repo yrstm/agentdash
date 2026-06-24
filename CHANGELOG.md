@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Hermes: multiple live processes that don't export `HERMES_SESSION_ID` no longer
+  all collapse onto the newest active session (duplicate rows). Sessions are now
+  resolved in one batch that claims each session at most once — exact id matches
+  first, then heuristic matches in PID order; a process with no distinct session
+  left is shown unpaired rather than duplicated.
+
 - `agentdash memory`: a local agent-memory drift tracker. Every run samples
   repo-root `CLAUDE.md` / `AGENTS.md` for projects with a live session (mtime/size
   short-circuit before hashing) and appends to a never-pruned log at

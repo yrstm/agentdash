@@ -11,7 +11,7 @@ import (
 // as it always has.
 var (
 	externalKinds  = map[string]bool{}
-	externalPair   func(p procs.Proc, h string, cache *parse.Cache, newPidMap map[string]parse.PidInfo, repos map[string]string, row *Row) (procs.Pairing, bool)
+	externalBatch  func(agents []procs.Proc, h string, cache *parse.Cache, newPidMap map[string]parse.PidInfo) map[int]procs.Pairing
 	externalResume func(parse.PidInfo) (string, bool)
 )
 
@@ -21,9 +21,12 @@ func isExternalKind(kind string) bool { return externalKinds[kind] }
 // than the built-in claude/codex locators.
 func RegisterExternalKind(kind string) { externalKinds[kind] = true }
 
-// RegisterExternalPair installs the live-process pairing hook for external kinds.
-func RegisterExternalPair(f func(p procs.Proc, h string, cache *parse.Cache, newPidMap map[string]parse.PidInfo, repos map[string]string, row *Row) (procs.Pairing, bool)) {
-	externalPair = f
+// RegisterExternalBatch installs the pairing hook for external kinds. It resolves
+// every external process at once (a batch, like PairClaude) so the adapter can
+// claim each session at most once and not collapse several processes onto one.
+// It returns pid->pairing and populates cache.Entries and newPidMap.
+func RegisterExternalBatch(f func(agents []procs.Proc, h string, cache *parse.Cache, newPidMap map[string]parse.PidInfo) map[int]procs.Pairing) {
+	externalBatch = f
 }
 
 // RegisterExternalResume installs the resume-command hook for external kinds.

@@ -16,11 +16,14 @@ const keySep = "#"
 
 // Query describes the process-side evidence agentdash can use to pair a
 // Hermes PID to a row in state.db. SessionID is exact when Hermes exposes
-// HERMES_SESSION_ID; cwd/start are heuristic fallbacks.
+// HERMES_SESSION_ID; cwd/start are heuristic fallbacks. Exclude holds session
+// ids already claimed by other processes this draw, so two processes that can't
+// be told apart don't both collapse onto the same session.
 type Query struct {
 	SessionID string
 	Cwd       string
 	Start     int64
+	Exclude   map[string]bool
 }
 
 // Session is the row data extracted from a Hermes state.db session.
@@ -95,19 +98,19 @@ func Find(dbPath string, q Query) (Session, bool) {
 		return Session{}, false
 	}
 	defer db.Close()
-	if q.SessionID != "" {
+	if q.SessionID != "" && !q.Exclude[q.SessionID] {
 		if s, ok := loadByID(db, q.SessionID); ok {
 			s.How, s.Sure = "session-id", true
 			return s, true
 		}
 	}
 	if q.Cwd != "" {
-		if s, ok := loadHeuristic(db, q.Cwd, q.Start, true); ok {
+		if s, ok := loadHeuristic(db, q.Cwd, q.Start, true, q.Exclude); ok {
 			s.How, s.Sure = "cwd+start", false
 			return s, true
 		}
 	}
-	if s, ok := loadHeuristic(db, "", q.Start, false); ok {
+	if s, ok := loadHeuristic(db, "", q.Start, false, q.Exclude); ok {
 		s.How, s.Sure = "start", false
 		return s, true
 	}
@@ -139,7 +142,7 @@ func loadByID(db *sql.DB, id string) (Session, bool) {
 	return scanSession(db.QueryRow(sessionSQL+" WHERE s.id = ?", id))
 }
 
-func loadHeuristic(db *sql.DB, cwd string, start int64, requireCwd bool) (Session, bool) {
+func loadHeuristic(db *sql.DB, cwd string, start int64, requireCwd bool, exclude map[string]bool) (Session, bool) {
 	where := " WHERE s.ended_at IS NULL"
 	args := []any{}
 	if requireCwd {
@@ -155,7 +158,7 @@ func loadHeuristic(db *sql.DB, cwd string, start int64, requireCwd bool) (Sessio
 	bestScore := math.MaxFloat64
 	for rows.Next() {
 		s, ok := scanRows(rows)
-		if !ok {
+		if !ok || exclude[s.ID] {
 			continue
 		}
 		score := math.Abs(float64(start) - s.Entry.Seen)
