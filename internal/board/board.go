@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yrstm/agentdash/internal/eventlog"
 	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
 	"github.com/yrstm/agentdash/internal/paths"
@@ -418,6 +419,7 @@ func Collect(now int64, opt Options) *Board {
 
 	b.Ports = collectPorts(agents, h)
 	b.Now = now
+	emitBoardEvents(b.Rows, agents)
 
 	if opt.Sections {
 		b.TmuxSessions = procs.Sessions()
@@ -578,6 +580,82 @@ func fillCells(row *Row, ent *parse.Entry, pairing procs.Pairing, respawnN int,
 	row.Status = parse.StatusOf(ent, respawnN, now, th)
 	row.Last = parse.Ago(int64(now - ent.Mtime))
 	row.Spark = parse.SparkOf(ent.Hist)
+}
+
+// emitBoardEvents fires structural eventlog events for the assembled rows.
+// It is fail-soft and uses per-process dedup to prevent spam in watch mode.
+func emitBoardEvents(rows []Row, agents []procs.Proc) {
+	if !eventlog.Enabled() {
+		return
+	}
+	var events []eventlog.Event
+	for _, row := range rows {
+		pidKey := strconv.Itoa(row.PID)
+
+		// session_seen: emit once per pid per process lifetime
+		sessKey := "session_seen:" + pidKey
+		if !eventlog.AlreadyEmitted(sessKey) {
+			eventlog.MarkEmitted(sessKey)
+			model := row.Model
+			if model == "-" {
+				model = ""
+			}
+			events = append(events, eventlog.Event{
+				Type:  eventlog.TypeSessionSeen,
+				Agent: row.Kind,
+				Model: model,
+				Cwd:   row.Cwd,
+			})
+		}
+
+		// ctx_high: emit once per (pid, threshold-band) per process lifetime
+		if row.CtxTok > 0 && row.Ctx != "-" {
+			pctStr := strings.TrimSuffix(row.Ctx, "%")
+			if pct, err := strconv.Atoi(pctStr); err == nil {
+				thresh := 0
+				switch {
+				case pct >= 85:
+					thresh = 85
+				case pct >= 70:
+					thresh = 70
+				}
+				if thresh > 0 {
+					ctxKey := fmt.Sprintf("ctx_high:%s:%d", pidKey, thresh)
+					if !eventlog.AlreadyEmitted(ctxKey) {
+						eventlog.MarkEmitted(ctxKey)
+						model := row.Model
+						if model == "-" {
+							model = ""
+						}
+						events = append(events, eventlog.Event{
+							Type:     eventlog.TypeCtxHigh,
+							Cwd:      row.Cwd,
+							CtxPct:   pct,
+							CtxModel: model,
+						})
+					}
+				}
+			}
+		}
+
+		// respawn: emit once per (pid, status) per process lifetime
+		if strings.HasPrefix(row.Status, "respawn") {
+			respawnKey := "respawn:" + pidKey + ":" + row.Status
+			if !eventlog.AlreadyEmitted(respawnKey) {
+				eventlog.MarkEmitted(respawnKey)
+				n := 0
+				fmt.Sscanf(row.Status, "respawn×%d", &n)
+				events = append(events, eventlog.Event{
+					Type:     eventlog.TypeRespawn,
+					Cwd:      row.Cwd,
+					RespawnN: n,
+				})
+			}
+		}
+	}
+	if len(events) > 0 {
+		eventlog.Emit(events)
+	}
 }
 
 func collectPorts(agents []procs.Proc, h string) []procs.Port {

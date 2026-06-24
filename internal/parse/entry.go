@@ -9,7 +9,7 @@ package parse
 
 // ParserV is bumped when parsers extract new fields: forces a one-time
 // rescan. It tracks the v1 PARSER_V so a v1 cache survives the upgrade.
-const ParserV = 5
+const ParserV = 6
 
 // Entry is one session file's accumulated state. The JSON tags match the
 // v1 Python cache exactly so ~/.cache/agentdash/usage.json round-trips
@@ -33,8 +33,9 @@ type Entry struct {
 	Summary    string  `json:"summary,omitempty"`
 	LastText   string  `json:"last_text,omitempty"`
 	LastTool   string  `json:"last_tool,omitempty"`
-	Activity   string  `json:"activity,omitempty"`
-	LastMid    string  `json:"last_mid,omitempty"`
+	Activity    string `json:"activity,omitempty"`
+	LastMid     string `json:"last_mid,omitempty"`
+	CompactionN int    `json:"compaction_n,omitempty"` // number of context-compaction summary entries
 }
 
 // updaters maps an agent kind to its line updater. Adding an agent is one
