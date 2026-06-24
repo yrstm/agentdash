@@ -4,46 +4,68 @@ package board
 
 import (
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/yrstm/agentdash/internal/hermesdb"
 	"github.com/yrstm/agentdash/internal/parse"
-	"github.com/yrstm/agentdash/internal/paths"
 	"github.com/yrstm/agentdash/internal/procs"
 )
 
 func init() {
 	RegisterExternalKind("hermes")
-	RegisterExternalPair(hermesPairing)
+	RegisterExternalBatch(hermesBatch)
 	RegisterExternalResume(hermesResumeCmd)
 }
 
-// hermesPairing pairs a live Hermes process to a session in its read-only
-// state.db, by exact session id (HERMES_SESSION_ID) or cwd/start heuristic.
-func hermesPairing(p procs.Proc, h string, cache *parse.Cache, newPidMap map[string]parse.PidInfo, repos map[string]string, row *Row) (procs.Pairing, bool) {
-	profile := p.Extra["HERMES_PROFILE"]
-	homeDir := hermesdb.ResolveHome(h, p.Extra["HERMES_HOME"], profile)
-	dbPath := hermesdb.StateDB(homeDir)
-	sess, ok := hermesdb.Find(dbPath, hermesdb.Query{SessionID: p.Extra["HERMES_SESSION_ID"], Cwd: p.Cwd, Start: p.Start})
-	if !ok {
-		return procs.Pairing{}, false
-	}
-	key := hermesdb.Key(dbPath, sess.ID)
-	cache.Entries[key] = &sess.Entry
-	newPidMap[strconv.Itoa(p.PID)] = parse.PidInfo{
-		Path: key, Start: float64(p.Start), Sure: sess.Sure,
-		Cwd: sess.Entry.Cwd, How: sess.How, Kind: p.Kind, Profile: profile}
-	if sess.Entry.Cwd != "" {
-		row.Cwd = sess.Entry.Cwd
-		if repo, ok := repos[row.Cwd]; ok {
-			row.Repo = repo
-		} else {
-			row.Repo = paths.RepoRoot(row.Cwd)
-			repos[row.Cwd] = row.Repo
+// hermesBatch pairs every live Hermes process to a distinct session in its
+// read-only state.db. Without it, several processes that don't export
+// HERMES_SESSION_ID would each independently resolve to the newest active
+// session and show as duplicate rows. Processes with an exact session id are
+// resolved first (so a heuristic can't claim a session another process
+// definitively owns); the rest claim the best still-unclaimed session in PID
+// order, and a process with no distinct session left is simply left unpaired —
+// honest over duplicated.
+func hermesBatch(agents []procs.Proc, h string, cache *parse.Cache, newPidMap map[string]parse.PidInfo) map[int]procs.Pairing {
+	var hermes []procs.Proc
+	for _, p := range agents {
+		if p.Kind == "hermes" {
+			hermes = append(hermes, p)
 		}
 	}
-	return procs.Pairing{Path: key, Sure: sess.Sure, How: sess.How}, true
+	sort.SliceStable(hermes, func(i, j int) bool {
+		ei := hermes[i].Extra["HERMES_SESSION_ID"] != ""
+		ej := hermes[j].Extra["HERMES_SESSION_ID"] != ""
+		if ei != ej {
+			return ei // exact session-id processes first
+		}
+		return hermes[i].PID < hermes[j].PID
+	})
+
+	res := map[int]procs.Pairing{}
+	claimed := map[string]map[string]bool{} // dbPath -> claimed session ids
+	for _, p := range hermes {
+		profile := p.Extra["HERMES_PROFILE"]
+		dbPath := hermesdb.StateDB(hermesdb.ResolveHome(h, p.Extra["HERMES_HOME"], profile))
+		sess, ok := hermesdb.Find(dbPath, hermesdb.Query{
+			SessionID: p.Extra["HERMES_SESSION_ID"], Cwd: p.Cwd, Start: p.Start,
+			Exclude: claimed[dbPath]})
+		if !ok {
+			continue // no distinct session left: leave unpaired, don't duplicate
+		}
+		if claimed[dbPath] == nil {
+			claimed[dbPath] = map[string]bool{}
+		}
+		claimed[dbPath][sess.ID] = true
+		key := hermesdb.Key(dbPath, sess.ID)
+		cache.Entries[key] = &sess.Entry
+		newPidMap[strconv.Itoa(p.PID)] = parse.PidInfo{
+			Path: key, Start: float64(p.Start), Sure: sess.Sure,
+			Cwd: sess.Entry.Cwd, How: sess.How, Kind: p.Kind, Profile: profile}
+		res[p.PID] = procs.Pairing{Path: key, Sure: sess.Sure, How: sess.How}
+	}
+	return res
 }
 
 func hermesResumeCmd(m parse.PidInfo) (string, bool) {

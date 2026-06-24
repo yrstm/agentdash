@@ -186,6 +186,12 @@ func Collect(now int64, opt Options) *Board {
 
 	newPidMap := map[string]parse.PidInfo{}
 	pairings := procs.PairClaude(agents, h, cache.PidMap, newPidMap)
+	// external kinds (e.g. Hermes) are resolved in one batch so the adapter can
+	// claim each session at most once; nil in the default build.
+	var externalPairings map[int]procs.Pairing
+	if externalBatch != nil {
+		externalPairings = externalBatch(agents, h, cache, newPidMap)
+	}
 	codexCands := map[string][]procs.CodexRollout{}
 	codexRollouts := func(cwd string) []procs.CodexRollout {
 		c, ok := codexCands[cwd]
@@ -277,8 +283,17 @@ func Collect(now int64, opt Options) *Board {
 			case p.Kind == "claude":
 				pairing = pairings[p.PID]
 			case isExternalKind(p.Kind):
-				if externalPair != nil {
-					pairing, _ = externalPair(p, h, cache, newPidMap, repos, &row)
+				// resolved in the external batch above; apply the session's cwd to
+				// the row (the external store is authoritative for cwd)
+				pairing = externalPairings[p.PID]
+				if pi, ok := newPidMap[strconv.Itoa(p.PID)]; ok && pi.Cwd != "" {
+					row.Cwd = pi.Cwd
+					if repo, ok := repos[row.Cwd]; ok {
+						row.Repo = repo
+					} else {
+						row.Repo = paths.RepoRoot(row.Cwd)
+						repos[row.Cwd] = row.Repo
+					}
 				}
 			default:
 				// codex pairs on an open rollout fd (exact; catches resumed
