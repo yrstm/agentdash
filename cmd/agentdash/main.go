@@ -113,21 +113,21 @@ usage: agentdash [flags | subcommand]
   label <row|pid> <text>   set a persistent TASK label ("" clears)
   resume <row|pid>   print the ` + "`claude --resume`" + ` command (with cwd)
   recap [4h|30m|2d]  what changed since you last looked (default: last recap)
-  memory [repo|.] [--json]
-                     agent-memory drift: no arg = cross-project health board;
-                     a repo = its CLAUDE.md/AGENTS.md change log (local, sampled;
+  docs [repo|.] [--json]
+                     CLAUDE.md/AGENTS.md health: no arg = cross-project board;
+                     a repo = its memory file change log (local, sampled;
                      --json emits schema_version 1 for tooling)
-  config [--global] [--tree] [why <file>] [--json]
-                     inventory all config files that shape agent behaviour:
+  inspect [--global] [--tree] [why <file>] [--json]
+                     inventory all config files shaping agent behaviour:
                      CLAUDE.md, AGENTS.md, .cursor/rules, hooks, slash commands
-  mem [tail [N]] [--json]
+  log [tail [N]] [--json]
                      event log: structural observations about live sessions
                      (AGENTDASH_MEM=0 disables · AGENTDASH_MEM_NO_PROMPTS=1
                      omits prompt excerpts for shared/screen-shared boxes)
-  drift [--days N] [--min N] [--global] [--json]
-                     config-drift detection: finds instructions repeated in
-                     prompts but absent from config (missing_rule) and config
-                     references to paths that no longer exist (stale_rule)
+  audit [--days N] [--min N] [--global] [--json]
+                     config audit: finds instructions repeated in prompts but
+                     absent from config (missing_rule), and config references
+                     to paths that no longer exist (stale_rule)
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -153,17 +153,17 @@ func main() {
 		case "go", "recap", "resume", "show", "why", "label":
 			runAction(args[0], args[1:])
 			return
-		case "memory":
-			runMemory(args[1:])
+		case "docs":
+			runDocs(args[1:])
 			return
-		case "config":
-			runConfig(args[1:])
+		case "inspect":
+			runInspect(args[1:])
 			return
-		case "mem":
-			runMem(args[1:])
+		case "log":
+			runLog(args[1:])
 			return
-		case "drift":
-			runDrift(args[1:])
+		case "audit":
+			runAudit(args[1:])
 			return
 		}
 	}
@@ -292,12 +292,12 @@ func main() {
 	}
 }
 
-// runMemory drives the `agentdash memory` subcommand: with no argument it shows
+// runDocs drives the `agentdash docs` subcommand: with no argument it shows
 // the cross-project memory-health board (most-stale first); with a repo path or
 // "." it shows that project's memory change log. Both sample fresh first, so an
 // explicit inspection always reflects the current files. --json emits a stable
 // schema_version 1 document for tooling instead of the table.
-func runMemory(rest []string) {
+func runDocs(rest []string) {
 	jsonMode := false
 	repoArg := ""
 	for _, a := range rest {
@@ -469,8 +469,8 @@ func runAction(action string, rest []string) {
 	_ = home
 }
 
-// runConfig drives the `agentdash config` subcommand.
-func runConfig(rest []string) {
+// runInspect drives the `agentdash inspect` subcommand.
+func runInspect(rest []string) {
 	jsonMode := false
 	treeView := false
 	global := false
@@ -510,8 +510,8 @@ func runConfig(rest []string) {
 	fmt.Print(render.ConfigInventory(inv, theme, treeView))
 }
 
-// runMem drives the `agentdash mem` subcommand.
-func runMem(rest []string) {
+// runLog drives the `agentdash log` subcommand.
+func runLog(rest []string) {
 	jsonMode := false
 	tailN := 0
 	doTail := false
@@ -559,8 +559,8 @@ func runMem(rest []string) {
 	fmt.Print(render.EventLogSummary(sum, theme))
 }
 
-// runDrift drives the `agentdash drift` subcommand.
-func runDrift(rest []string) {
+// runAudit drives the `agentdash audit` subcommand.
+func runAudit(rest []string) {
 	jsonMode := false
 	global := false
 	days := 7

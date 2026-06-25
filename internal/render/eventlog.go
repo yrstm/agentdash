@@ -11,7 +11,7 @@ import (
 // EventLogSummary renders aggregate stats for the event log.
 func EventLogSummary(sum eventlog.Summary, t Theme) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%sMEM%s: agentdash event log\n", t.B, t.N)
+	fmt.Fprintf(&b, "%sLOG%s: agentdash event log\n", t.B, t.N)
 	fmt.Fprintf(&b, "  Path:     %s\n", sum.LogPath)
 	if sum.SizeBytes > 0 {
 		fmt.Fprintf(&b, "  Size:     %.1f KB\n", float64(sum.SizeBytes)/1024)
@@ -51,7 +51,7 @@ func EventLogSummary(sum eventlog.Summary, t Theme) string {
 			}
 		}
 	}
-	fmt.Fprintf(&b, "\n  %srecording enabled · AGENTDASH_MEM=0 to disable · AGENTDASH_MEM_NO_PROMPTS=1 to omit excerpts%s\n", t.D, t.N)
+	fmt.Fprintf(&b, "\n  %srecording enabled · AGENTDASH_MEM=0 to disable · AGENTDASH_MEM_NO_PROMPTS=1 to omit prompt excerpts%s\n", t.D, t.N)
 	return b.String()
 }
 

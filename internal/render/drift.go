@@ -10,7 +10,7 @@ import (
 // DriftFindings renders the list of drift findings as a human-readable report.
 func DriftFindings(findings []drift.Finding, project string, t Theme) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%sDRIFT%s: config vs observed agent behaviour for %s%s%s\n", t.B, t.N, t.D, shortProj(project), t.N)
+	fmt.Fprintf(&b, "%sAUDIT%s: config vs observed agent behaviour for %s%s%s\n", t.B, t.N, t.D, shortProj(project), t.N)
 	if len(findings) == 0 {
 		fmt.Fprintf(&b, "  no drift detected — config appears consistent with observed prompts\n")
 		return b.String()
@@ -18,7 +18,7 @@ func DriftFindings(findings []drift.Finding, project string, t Theme) string {
 	for _, f := range findings {
 		b.WriteString(DriftFindingDetail(f, t))
 	}
-	fmt.Fprintf(&b, "\n  %s%d finding(s) · uncertain findings (?) are heuristic matches · agentdash drift never edits files%s\n",
+	fmt.Fprintf(&b, "\n  %s%d finding(s) · uncertain findings (?) are heuristic matches · agentdash audit never edits files%s\n",
 		t.D, len(findings), t.N)
 	return b.String()
 }

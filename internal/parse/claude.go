@@ -202,13 +202,13 @@ func updateClaude(ent *Entry, line []byte) {
 	if t == "user" || t == "assistant" {
 		ent.LastType = t
 	}
-	switch {
-	case t == "summary":
+	switch t {
+	case "summary":
 		ent.CompactionN++ // every summary entry is one context-compaction cycle
 		if obj.Summary != "" && ent.Summary == "" {
 			ent.Summary = obj.Summary // keep the first summary as the task title
 		}
-	case t == "user":
+	case "user":
 		txt := firstUserText(obj.Message)
 		if ent.TitleUser == "" && usableTitle(txt) {
 			ent.TitleUser = txt
@@ -219,7 +219,7 @@ func updateClaude(ent *Entry, line []byte) {
 				ent.LastUserTS = ts
 			}
 		}
-	case t == "assistant":
+	case "assistant":
 		if obj.Message == nil {
 			return
 		}

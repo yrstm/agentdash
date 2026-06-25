@@ -644,7 +644,7 @@ func emitBoardEvents(rows []Row, agents []procs.Proc) {
 			if !eventlog.AlreadyEmitted(respawnKey) {
 				eventlog.MarkEmitted(respawnKey)
 				n := 0
-				fmt.Sscanf(row.Status, "respawn×%d", &n)
+				_, _ = fmt.Sscanf(row.Status, "respawn×%d", &n)
 				events = append(events, eventlog.Event{
 					Type:     eventlog.TypeRespawn,
 					Cwd:      row.Cwd,

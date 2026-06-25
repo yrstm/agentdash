@@ -121,6 +121,7 @@ func compareEntries(t *testing.T, py, gO *Entry) {
 		e.Mtime, e.Seen, e.Cwd = 0, 0, ""
 		e.V = 0
 		e.LastTool, e.Activity = "", ""
+		e.CompactionN = 0 // v1 Python engine does not track compaction cycles
 	}
 	if !reflect.DeepEqual(py, gO) {
 		pj, _ := json.MarshalIndent(py, "", " ")

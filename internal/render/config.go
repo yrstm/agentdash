@@ -10,7 +10,7 @@ import (
 // ConfigInventory renders the config inventory as a human-readable table.
 func ConfigInventory(r config.Result, t Theme, treeView bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%sCONFIG%s: agent config files for %s%s%s\n", t.B, t.N, t.D, shortProj(r.Project), t.N)
+	fmt.Fprintf(&b, "%sINSPECT%s: agent config files for %s%s%s\n", t.B, t.N, t.D, shortProj(r.Project), t.N)
 	if len(r.Items) == 0 {
 		fmt.Fprintf(&b, "  no config files found\n")
 		return b.String()
@@ -29,7 +29,7 @@ func ConfigInventory(r config.Result, t Theme, treeView bool) string {
 		b.WriteString(line + "\n")
 	}
 	total := len(r.Items)
-	fmt.Fprintf(&b, "\n  %s%d item(s) total · agentdash config why <file> for provenance%s\n", t.D, total, t.N)
+	fmt.Fprintf(&b, "\n  %s%d item(s) total · agentdash inspect why <file> for provenance%s\n", t.D, total, t.N)
 	return b.String()
 }
 
