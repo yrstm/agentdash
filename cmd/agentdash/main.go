@@ -18,6 +18,9 @@ import (
 	"golang.org/x/term"
 
 	"github.com/yrstm/agentdash/internal/board"
+	"github.com/yrstm/agentdash/internal/config"
+	"github.com/yrstm/agentdash/internal/drift"
+	"github.com/yrstm/agentdash/internal/eventlog"
 	"github.com/yrstm/agentdash/internal/jsonout"
 	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
@@ -110,10 +113,21 @@ usage: agentdash [flags | subcommand]
   label <row|pid> <text>   set a persistent TASK label ("" clears)
   resume <row|pid>   print the ` + "`claude --resume`" + ` command (with cwd)
   recap [4h|30m|2d]  what changed since you last looked (default: last recap)
-  memory [repo|.] [--json]
-                     agent-memory drift: no arg = cross-project health board;
-                     a repo = its CLAUDE.md/AGENTS.md change log (local, sampled;
+  docs [repo|.] [--json]
+                     CLAUDE.md/AGENTS.md health: no arg = cross-project board;
+                     a repo = its memory file change log (local, sampled;
                      --json emits schema_version 1 for tooling)
+  inspect [--global] [--tree] [why <file>] [--json]
+                     inventory all config files shaping agent behaviour:
+                     CLAUDE.md, AGENTS.md, .cursor/rules, hooks, slash commands
+  log [tail [N]] [--json]
+                     event log: structural observations about live sessions
+                     (AGENTDASH_MEM=0 disables · AGENTDASH_MEM_NO_PROMPTS=1
+                     omits prompt excerpts for shared/screen-shared boxes)
+  audit [--days N] [--min N] [--global] [--json]
+                     config audit: finds instructions repeated in prompts but
+                     absent from config (missing_rule), and config references
+                     to paths that no longer exist (stale_rule)
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -139,8 +153,17 @@ func main() {
 		case "go", "recap", "resume", "show", "why", "label":
 			runAction(args[0], args[1:])
 			return
-		case "memory":
-			runMemory(args[1:])
+		case "docs":
+			runDocs(args[1:])
+			return
+		case "inspect":
+			runInspect(args[1:])
+			return
+		case "log":
+			runLog(args[1:])
+			return
+		case "audit":
+			runAudit(args[1:])
 			return
 		}
 	}
@@ -269,12 +292,12 @@ func main() {
 	}
 }
 
-// runMemory drives the `agentdash memory` subcommand: with no argument it shows
+// runDocs drives the `agentdash docs` subcommand: with no argument it shows
 // the cross-project memory-health board (most-stale first); with a repo path or
 // "." it shows that project's memory change log. Both sample fresh first, so an
 // explicit inspection always reflects the current files. --json emits a stable
 // schema_version 1 document for tooling instead of the table.
-func runMemory(rest []string) {
+func runDocs(rest []string) {
 	jsonMode := false
 	repoArg := ""
 	for _, a := range rest {
@@ -444,6 +467,147 @@ func runAction(action string, rest []string) {
 	}
 	fmt.Print(out)
 	_ = home
+}
+
+// runInspect drives the `agentdash inspect` subcommand.
+func runInspect(rest []string) {
+	jsonMode := false
+	treeView := false
+	global := false
+	whyFile := ""
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			jsonMode = true
+		case "--tree":
+			treeView = true
+		case "--global":
+			global = true
+		case "why":
+			if i+1 < len(rest) {
+				i++
+				whyFile = rest[i]
+			}
+		}
+	}
+	home, _ := os.UserHomeDir()
+	wd, _ := os.Getwd()
+	proj := paths.RepoRoot(wd)
+	if proj == "" {
+		proj = wd
+	}
+	theme := render.NewTheme(jsonMode || !term.IsTerminal(int(os.Stdout.Fd())))
+	inv := config.Scan(proj, home, global)
+	if jsonMode {
+		out, err := config.JSON(inv)
+		emitJSON(out, err)
+		return
+	}
+	if whyFile != "" {
+		fmt.Print(render.ConfigWhy(inv, whyFile, theme))
+		return
+	}
+	fmt.Print(render.ConfigInventory(inv, theme, treeView))
+}
+
+// runLog drives the `agentdash log` subcommand.
+func runLog(rest []string) {
+	jsonMode := false
+	tailN := 0
+	doTail := false
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			jsonMode = true
+		case "tail":
+			doTail = true
+			if i+1 < len(rest) {
+				if n, err := strconv.Atoi(rest[i+1]); err == nil && n > 0 {
+					tailN = n
+					i++
+				}
+			}
+			if tailN == 0 {
+				tailN = 40
+			}
+		case "clear":
+			fmt.Fprintln(os.Stderr, "agentdash mem clear: not implemented (delete the file manually to clear)")
+			os.Exit(2)
+		case "off":
+			fmt.Fprintln(os.Stderr, "agentdash mem off: set AGENTDASH_MEM=0 in your shell to disable recording")
+			os.Exit(2)
+		}
+	}
+	theme := render.NewTheme(jsonMode || !term.IsTerminal(int(os.Stdout.Fd())))
+	logPath := eventlog.LogPath()
+	if doTail {
+		events := eventlog.Tail(logPath, tailN)
+		if jsonMode {
+			out, err := eventlog.MarshalJSON(events)
+			emitJSON(out, err)
+			return
+		}
+		fmt.Print(render.EventLogTail(events, theme))
+		return
+	}
+	sum := eventlog.Summarize(logPath)
+	if jsonMode {
+		out, err := eventlog.SummarizeJSON(sum)
+		emitJSON(out, err)
+		return
+	}
+	fmt.Print(render.EventLogSummary(sum, theme))
+}
+
+// runAudit drives the `agentdash audit` subcommand.
+func runAudit(rest []string) {
+	jsonMode := false
+	global := false
+	days := 7
+	minN := 3
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			jsonMode = true
+		case "--global":
+			global = true
+		case "--days":
+			if i+1 < len(rest) {
+				if n, err := strconv.Atoi(rest[i+1]); err == nil && n > 0 {
+					days = n
+					i++
+				}
+			}
+		case "--min":
+			if i+1 < len(rest) {
+				if n, err := strconv.Atoi(rest[i+1]); err == nil && n > 0 {
+					minN = n
+					i++
+				}
+			}
+		}
+	}
+	home, _ := os.UserHomeDir()
+	wd, _ := os.Getwd()
+	proj := paths.RepoRoot(wd)
+	if proj == "" {
+		proj = wd
+	}
+	theme := render.NewTheme(jsonMode || !term.IsTerminal(int(os.Stdout.Fd())))
+	opt := drift.Options{
+		Project:       proj,
+		Home:          home,
+		MinOccurrence: minN,
+		WindowDays:    days,
+		IncludeGlobal: global,
+	}
+	findings := drift.Detect(opt)
+	if jsonMode {
+		out, err := drift.JSON(findings)
+		emitJSON(out, err)
+		return
+	}
+	fmt.Print(render.DriftFindings(findings, proj, theme))
 }
 
 var recapSpecRe = regexp.MustCompile(`^([0-9]+)([mhd])$`)

@@ -114,6 +114,13 @@ func Show(cache *parse.Cache, pid int, t Theme, now float64) (string, error) {
 	} else {
 		fmt.Fprintf(&w, "  Context:  %sunknown%s\n", t.D, t.N)
 	}
+	if ent.CompactionN > 0 {
+		cc := t.Y
+		if ent.CompactionN >= 3 {
+			cc = t.R
+		}
+		fmt.Fprintf(&w, "  Compact:  %s%d context compaction(s) in this session%s\n", cc, ent.CompactionN, t.N)
+	}
 	fmt.Fprintf(&w, "  Last:     written %s ago\n", parse.Ago(int64(now-ent.Mtime)))
 	fmt.Fprintf(&w, "  Session:  %s%s%s\n", t.D, m.Path, t.N)
 	fmt.Fprintf(&w, "  Resume:   %s\n", board.ResumeCmd(m))
