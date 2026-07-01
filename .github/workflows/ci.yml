@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - run: shellcheck -x install.sh legacy/agentdash.sh integrations/statusbar.sh tests/demo-env.sh bench/*.sh tools/parity.sh
+      - run: shellcheck -x install.sh legacy/agentdash.sh integrations/statusbar.sh tests/demo-env.sh tests/fixtures/generate.sh bench/*.sh tools/parity.sh
 
   legacy-bats:
     runs-on: ubuntu-latest
