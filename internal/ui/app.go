@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -440,7 +439,7 @@ func liveSessionPaths() map[string]bool {
 	cache := board.LoadCacheForActions()
 	live := map[string]bool{}
 	for pid, p := range cache.PidMap {
-		if _, err := os.Stat(filepath.Join(procs.Root(), pid)); err == nil && p.Path != "" {
+		if procs.Alive(pid) && p.Path != "" {
 			live[p.Path] = true
 		}
 	}

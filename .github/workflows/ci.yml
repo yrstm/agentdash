@@ -33,6 +33,23 @@ jobs:
       - run: go build -tags hermes ./...
       - run: go test -tags hermes ./... -race
 
+  go-macos:
+    # A0: the same suite must be green on macOS, where the collector shells out
+    # to ps/lsof instead of reading /proc. The docker/ss/strace/utmp-specific
+    # jobs are Linux-only and don't run here; the darwin parsing logic is also
+    # covered on Linux (darwin_parse_test.go carries no build tag).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test ./... -race
+      - run: go build -tags hermes ./...
+      - run: go test -tags hermes ./... -race
+
   golangci:
     runs-on: ubuntu-latest
     steps:

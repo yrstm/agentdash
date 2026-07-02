@@ -10,18 +10,19 @@
 # agentdash
 
 `w`, but for coding agents. agentdash prints a table of the agent
-processes on a Linux box: what each one is working on, what model it is
-on, how full its context is, and whether it is blocked waiting on you.
-`-w` turns the table into a small interactive TUI.
+processes on a Linux or macOS box: what each one is working on, what
+model it is on, how full its context is, and whether it is blocked
+waiting on you. `-w` turns the table into a small interactive TUI.
 
 It is a single static binary (no cgo, no runtime services), reading
 the session files agent CLIs already write locally (Claude Code and
 Codex are supported; adding another agent is a small parser, see
-CONTRIBUTING.md) and /proc directly. No daemon, no server, no API
-calls, no telemetry, no file watcher, and it never launches or manages
-sessions. Watch mode samples foreground state on the TUI refresh tick,
-like `w` or `htop`. I wrote it because I kept losing track of agents
-across tmux sessions; maybe it is useful to you too. Linux only.
+CONTRIBUTING.md) and the OS process table directly — `/proc` on Linux,
+`ps`/`lsof` on macOS. No daemon, no server, no API calls, no telemetry,
+no file watcher, and it never launches or manages sessions. Watch mode
+samples foreground state on the TUI refresh tick, like `w` or `htop`. I
+wrote it because I kept losing track of agents across tmux sessions;
+maybe it is useful to you too. Runs on Linux and macOS.
 
 ## Install
 
@@ -29,14 +30,15 @@ across tmux sessions; maybe it is useful to you too. Linux only.
 curl -fsSL https://raw.githubusercontent.com/yrstm/agentdash/main/install.sh | sh
 ```
 
-or grab the binary directly:
+or grab the binary directly (`linux-amd64`, `linux-arm64`,
+`darwin-amd64`, `darwin-arm64`):
 
 ```sh
 curl -fsSLo ~/.local/bin/agentdash https://github.com/yrstm/agentdash/releases/latest/download/agentdash-linux-amd64
 chmod +x ~/.local/bin/agentdash
 ```
 
-or with Homebrew (this also works on Linux), or go install:
+or with Homebrew (Linux and macOS), or go install:
 
 ```sh
 brew install yrstm/agentdash/agentdash
@@ -46,7 +48,11 @@ go install github.com/yrstm/agentdash/cmd/agentdash@latest
 It is a single static binary with no cgo and no runtime services.
 Optional at runtime: tmux (pane jumping, attachment glyphs), docker
 (sandbox section, skipped if absent), jq (only for the integrations).
-The auditable v1 bash version lives in `legacy/` and keeps working.
+On macOS, `lsof` (shipped with the OS) is used to read process working
+directories, open session files, and listening ports — the roles
+`/proc` fills on Linux; the ports and sandbox sections degrade
+gracefully if it is unavailable. The auditable v1 bash version lives in
+`legacy/` and keeps working (Linux only).
 
 Dependency footprint (measured with `go list -buildvcs=false`; absolute package
 counts vary a little by Go toolchain): the default build is **~201 compiled
