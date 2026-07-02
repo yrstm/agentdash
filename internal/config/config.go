@@ -68,7 +68,7 @@ func enrich(res *Result, project string) {
 		if st, err := os.Stat(it.Path); err == nil {
 			it.Modified = st.ModTime().Unix()
 		}
-		it.Tracked = tracked[it.Path]
+		it.Tracked = tracked[resolvePath(it.Path)]
 		if it.Kind == "hook" {
 			continue // a hook is a trigger, not loaded context
 		}
@@ -102,10 +102,31 @@ func gitTrackedSet(project string) map[string]bool {
 	}
 	for _, rel := range strings.Split(string(files), "\x00") {
 		if rel != "" {
-			out[filepath.Join(root, rel)] = true
+			out[resolvePath(filepath.Join(root, rel))] = true
 		}
 	}
 	return out
+}
+
+// resolvePath canonicalizes a path for comparison only — it is used to build
+// the tracked-set keys and the lookup key, never to change Item.Path or any
+// emitted/rendered path (those stay as-discovered). On macOS `git rev-parse
+// --show-toplevel` resolves /var -> /private/var (temp dirs, symlinked homes)
+// while a config item's Path keeps the caller's spelling, so both sides must be
+// canonicalized at the boundary. For a path that does not exist (a dead-path
+// item), EvalSymlinks fails, so canonicalize the nearest existing ancestor and
+// rejoin, falling back to a lexical clean — the path is never dropped.
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	dir, base := filepath.Split(p)
+	if dir != "" {
+		if r, err := filepath.EvalSymlinks(filepath.Clean(dir)); err == nil {
+			return filepath.Join(r, base)
+		}
+	}
+	return filepath.Clean(p)
 }
 
 // claudeInstructions walks from project root toward home collecting CLAUDE.md

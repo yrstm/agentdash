@@ -177,11 +177,17 @@ func TestBuildPayload(t *testing.T) {
 func TestRunHookExec(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "fired")
+	// Synchronize on completion, not timing: the hook writes to a temp file and
+	// atomically renames it into place, so `out` appears only once fully written
+	// and the poll below can never read a half-flushed prefix. (This race was
+	// platform-independent — Linux just kept winning it; macOS scheduling lost
+	// it on one run, which is how it surfaced in CI.)
 	r := board.Row{PID: 99, Kind: "claude", Status: "stuck?", Need: true, Task: "merge", Cwd: "/home/user/proj"}
 	runHook(hookEvent{
 		name: "stuck",
 		cmd: "{ printf '%s|%s|%s|%s|%s|' \"$AGENTDASH_EVENT\" \"$AGENTDASH_PID\" " +
-			"\"$AGENTDASH_AGENT\" \"$AGENTDASH_CWD\" \"$AGENTDASH_STATUS\"; cat; } > " + out,
+			"\"$AGENTDASH_AGENT\" \"$AGENTDASH_CWD\" \"$AGENTDASH_STATUS\"; cat; } > " +
+			out + ".part && mv " + out + ".part " + out,
 		row: r,
 	})
 

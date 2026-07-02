@@ -67,3 +67,57 @@ func TestScanEnrichesColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestScanTrackedThroughSymlink reproduces the macOS /var -> /private/var class
+// on Linux: git resolves the repo toplevel through a symlink while the scanned
+// project path keeps the symlink spelling. The git-tracked lookup must
+// canonicalize both sides (§1b.6), and Item.Path must stay as-discovered.
+func TestScanTrackedThroughSymlink(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "CLAUDE.md"), []byte("# rules\nUse tabs.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		c := exec.Command("git", append([]string{"-C", real}, args...)...)
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	run("init", "-q")
+	run("add", "CLAUDE.md")
+	run("commit", "-q", "-m", "add")
+
+	link := filepath.Join(base, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	// Scan via the symlink path: git resolves the toplevel to `real`, but the
+	// item path keeps the `link` spelling.
+	res := Scan(link, base, false)
+	linkPath := filepath.Join(link, "CLAUDE.md")
+	var found *Item
+	for i := range res.Items {
+		if res.Items[i].Path == linkPath {
+			found = &res.Items[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("CLAUDE.md not inventoried via the symlink path: %+v", res.Items)
+	}
+	if !found.Tracked {
+		t.Error("committed CLAUDE.md should be tracked even when scanned through a symlink")
+	}
+	// Item.Path stays as-discovered (the symlink spelling), never resolved.
+	if found.Path != linkPath {
+		t.Errorf("Item.Path = %q, want the as-discovered %q (must not be canonicalized)", found.Path, linkPath)
+	}
+}
