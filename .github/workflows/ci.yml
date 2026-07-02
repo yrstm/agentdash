@@ -38,6 +38,14 @@ jobs:
     # to ps/lsof instead of reading /proc. The docker/ss/strace/utmp-specific
     # jobs are Linux-only and don't run here; the darwin parsing logic is also
     # covered on Linux (darwin_parse_test.go carries no build tag).
+    #
+    # Run once per change: macOS minutes bill ~10x, and a branch with an open PR
+    # fires both a push and a pull_request event. Gate this (only) to
+    # pull_request so it runs exactly once per push to the PR branch — a real
+    # green/red, not a racy concurrency cancellation — while the cheap Linux
+    # jobs keep their push+PR triggers. The PR check is the merge gate, so main
+    # is covered before merge; a direct push to main runs no macOS job.
+    if: github.event_name == 'pull_request'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
