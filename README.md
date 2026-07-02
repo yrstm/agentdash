@@ -103,7 +103,37 @@ agentdash grep <pattern>   search past sessions of both agents (--json for tooli
 agentdash du               disk triage: agent file sizes by category (--json for tooling)
 agentdash usage            local token-spend estimate: windows, burn, attribution
 agentdash health           per-agent warning roll-up; exit 0 if nothing flagged
+agentdash inspect          inventory config files (token cost, mtime, git-tracked)
+agentdash audit            config + context-rot findings (--handoff for a fix pack)
+agentdash context <row|pid>  the effective instruction stack for a live session
 ```
+
+### Config inventory & context rot (`inspect`, `audit`, `context`)
+
+`agentdash inspect` inventories every file that shapes agent behaviour for the
+current project — the CLAUDE.md / AGENTS.md chain, `.cursor/rules`, hooks, and
+slash commands — with an estimated token cost (`~chars/4`), last-modified
+date, and whether each file is git-tracked, and a footer with the total
+always-loaded instruction tokens. `inspect why <file>` explains why a file
+applies.
+
+`agentdash audit` reports deterministic, evidence-backed findings — no model
+calls. Alongside the original drift checks (`missing_rule`, `stale_rule`) it
+now flags **conflicting rules** across files (same topic, opposite values —
+indentation, package manager, test runner), **duplicate rules**, **dead hooks**
+(a settings hook pointing at a missing or non-executable script), and a
+**heavy context** (the always-loaded chain over a token budget; default 4k,
+`AGENTDASH_LINT_CTX_TOKENS` overrides). Each finding has a severity, evidence
+lines, and a suggested fix. It **never edits files**; `--handoff <file>` writes
+an evidence pack plus a ready prompt you can feed to your own agent to apply the
+fixes — that file is the only LLM boundary, and agentdash calls nothing.
+
+`agentdash context <row|pid>` shows the effective instruction stack for a live
+session: the memory-file chain for its cwd, active hooks, and configured MCP
+servers, each with an estimated token cost; the model's window and current
+CTX% (exact, from usage); and the session's compaction events with timestamps.
+The MCP tool-schema "context tax" is reported as not measurable from
+transcripts rather than guessed.
 
 ### Search past sessions (`agentdash grep`)
 

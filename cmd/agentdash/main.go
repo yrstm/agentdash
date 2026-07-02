@@ -19,6 +19,7 @@ import (
 
 	"github.com/yrstm/agentdash/internal/board"
 	"github.com/yrstm/agentdash/internal/config"
+	"github.com/yrstm/agentdash/internal/ctxstack"
 	"github.com/yrstm/agentdash/internal/drift"
 	"github.com/yrstm/agentdash/internal/du"
 	"github.com/yrstm/agentdash/internal/eventlog"
@@ -129,10 +130,14 @@ usage: agentdash [flags | subcommand]
                      event log: structural observations about live sessions
                      (AGENTDASH_MEM=0 disables · AGENTDASH_MEM_NO_PROMPTS=1
                      omits prompt excerpts for shared/screen-shared boxes)
-  audit [--days N] [--min N] [--global] [--json]
-                     config audit: finds instructions repeated in prompts but
-                     absent from config (missing_rule), and config references
-                     to paths that no longer exist (stale_rule)
+  audit [--days N] [--min N] [--global] [--json] [--handoff <file>]
+                     config + context-rot audit: instructions repeated in
+                     prompts but absent from config (missing_rule), dead config
+                     path refs (stale_rule), conflicting rules across files,
+                     duplicate rules, hooks pointing at missing/non-exec scripts
+                     (dead_hook), and an oversized always-loaded chain
+                     (heavy_context; AGENTDASH_LINT_CTX_TOKENS sets the budget).
+                     --handoff writes an evidence pack + ready prompt (no --fix)
   grep <pattern> [--role user|assistant] [--project <dir>] [--since 7d]
        [-n N] [--tools] [--json]
                      search past sessions of both agents (regexp over message
@@ -148,6 +153,10 @@ usage: agentdash [flags | subcommand]
   health [--json]    per-agent roll-up of warning signals (stuck/respawn, ctx
                      high, frequent compaction, API errors, interrupts, waiting
                      time, zombie MCP procs). Exit 0 if nothing is flagged
+  context <row|pid> [--json]
+                     the effective instruction stack for a live session: memory
+                     chain, hooks, MCP servers (with token estimates), the
+                     model window + current CTX%, and compaction events
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -196,6 +205,9 @@ func main() {
 			return
 		case "health":
 			runHealth(args[1:])
+			return
+		case "context":
+			runContext(args[1:])
 			return
 		}
 	}
@@ -597,6 +609,7 @@ func runAudit(rest []string) {
 	global := false
 	days := 7
 	minN := 3
+	handoff := ""
 	for i := 0; i < len(rest); i++ {
 		switch rest[i] {
 		case "--json":
@@ -617,6 +630,11 @@ func runAudit(rest []string) {
 					i++
 				}
 			}
+		case "--handoff":
+			if i+1 < len(rest) {
+				i++
+				handoff = rest[i]
+			}
 		}
 	}
 	home, _ := os.UserHomeDir()
@@ -634,12 +652,126 @@ func runAudit(rest []string) {
 		IncludeGlobal: global,
 	}
 	findings := drift.Detect(opt)
+	if handoff != "" {
+		if err := os.WriteFile(handoff, []byte(drift.Handoff(findings, proj)), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, "agentdash:", err)
+			os.Exit(1)
+		}
+		fmt.Printf("wrote %d finding(s) to %s (evidence pack + ready prompt; agentdash applied nothing)\n", len(findings), handoff)
+		return
+	}
 	if jsonMode {
 		out, err := drift.JSON(findings)
 		emitJSON(out, err)
 		return
 	}
 	fmt.Print(render.DriftFindings(findings, proj, theme))
+}
+
+// runContext drives the `agentdash context <row|pid>` subcommand: the effective
+// instruction stack for a live session.
+func runContext(rest []string) {
+	jsonMode := false
+	arg := ""
+	for _, a := range rest {
+		if a == "--json" {
+			jsonMode = true
+		} else if arg == "" {
+			arg = a
+		}
+	}
+	if arg == "" {
+		fmt.Fprintln(os.Stderr, "agentdash: context needs a row number or pid")
+		os.Exit(2)
+	}
+	now := time.Now().Unix()
+	b := board.Collect(now, board.Options{})
+	pid := 0
+	if n, err := strconv.Atoi(arg); err == nil && n >= 1 && n <= len(b.Rows) {
+		pid = b.Rows[n-1].PID
+	} else {
+		pid, _ = strconv.Atoi(arg)
+	}
+	kind := ""
+	for _, r := range b.Rows {
+		if r.PID == pid {
+			kind = r.Kind
+		}
+	}
+	cache := board.LoadCacheForActions()
+	pi, ent, err := board.PidEntry(cache, pid)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	home, _ := os.UserHomeDir()
+	chain, hooks, chainTokens, mcp := ctxstack.Inventory(home, pi.Cwd)
+	st := ctxstack.Stack{
+		PID: pid, Agent: kind, Cwd: pi.Cwd, Model: parse.ShortModel(ent.Model),
+		WindowTokens: ent.Win, CtxTokens: ent.Ctx, ChainTokens: chainTokens,
+		Chain: chain, Hooks: hooks, MCPServers: mcp,
+		Compactions: ctxstack.Compactions(pi.Path),
+	}
+	if ent.Win > 0 {
+		st.CtxPct = int(100 * ent.Ctx / ent.Win)
+	}
+	st.MCPTaxNote = "MCP tool-schema token cost is not measurable from transcripts"
+	if len(mcp) == 0 {
+		st.MCPTaxNote = "no MCP servers configured for this cwd"
+	}
+	if jsonMode {
+		out, err := ctxstack.JSON(st)
+		emitJSON(out, err)
+		return
+	}
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	printContext(st, theme, home)
+}
+
+func printContext(s ctxstack.Stack, t render.Theme, home string) {
+	fmt.Printf("%sCONTEXT%s: %s pid %s%d%s · %s%s%s\n",
+		t.B, t.N, s.Agent, t.D, s.PID, t.N, t.V, shortenHome(s.Cwd, home), t.N)
+	win := "unknown"
+	if s.WindowTokens > 0 {
+		win = parse.Hum(s.WindowTokens)
+	}
+	fmt.Printf("  model %s · window %s · ctx %s (%d%%) %s[exact, from usage]%s\n",
+		s.Model, win, parse.Hum(s.CtxTokens), s.CtxPct, t.D, t.N)
+
+	fmt.Printf("\n  %salways-loaded chain%s ~%s tokens %s(estimate, ~chars/4)%s\n",
+		t.B, t.N, parse.Hum(int64(s.ChainTokens)), t.D, t.N)
+	if len(s.Chain) == 0 {
+		fmt.Printf("    %s(no instruction/rule files for this cwd)%s\n", t.D, t.N)
+	}
+	for _, l := range s.Chain {
+		fmt.Printf("    %-8s %-11s ~%-6s %s\n", l.Scope, l.Kind, parse.Hum(int64(l.Tokens)), shortenHome(l.Path, home))
+	}
+
+	if len(s.Hooks) > 0 {
+		fmt.Printf("\n  %shooks%s\n", t.B, t.N)
+		for _, h := range s.Hooks {
+			fmt.Printf("    %-8s %s%s%s\n", h.Scope, t.D, h.Summary, t.N)
+		}
+	}
+
+	fmt.Printf("\n  %sMCP servers%s: ", t.B, t.N)
+	if len(s.MCPServers) == 0 {
+		fmt.Printf("%snone%s\n", t.D, t.N)
+	} else {
+		fmt.Printf("%s\n", strings.Join(s.MCPServers, ", "))
+	}
+	fmt.Printf("    %stool-schema context tax: %s%s\n", t.D, s.MCPTaxNote, t.N)
+
+	if len(s.Compactions) > 0 {
+		fmt.Printf("\n  %scompaction events%s (%d): the session's memory was compacted at\n", t.B, t.N, len(s.Compactions))
+		for _, ts := range s.Compactions {
+			when := "unknown time"
+			if ts > 0 {
+				when = time.Unix(ts, 0).UTC().Format("2006-01-02 15:04")
+			}
+			fmt.Printf("    %s%s%s\n", t.D, when, t.N)
+		}
+	}
 }
 
 // runHealth drives the `agentdash health` subcommand: a per-agent roll-up of
