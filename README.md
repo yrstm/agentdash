@@ -98,8 +98,7 @@ agentdash why <row|pid>    where every value on the row came from
 agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
-agentdash docs [repo|. | <file>]  agent-memory health, or one file's change history
-agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
+agentdash docs [repo|. | <file>]  agent-memory health, drift, and per-file change history (--json)
 agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
 agentdash du               disk triage: agent file sizes by category (--json for tooling)
 agentdash usage            local token-spend estimate: windows, burn, attribution
@@ -278,7 +277,7 @@ The signals, and how each is derived:
   unmistakable MCP markers in the command line, so a server still owned by a
   live agent is never flagged.
 
-### Memory drift (`agentdash memory`)
+### Memory health & file history (`agentdash docs`)
 
 In plain terms: agentdash quietly watches the memory files your agents rely on
 (`CLAUDE.md`, `AGENTS.md`) and tells you when a project's memory has gone stale
@@ -292,15 +291,25 @@ hashing, so steady-state cost is tiny) and appends to an append-only,
 never-pruned log at `~/.cache/agentdash/memory-log.jsonl` — but only when the
 content hash actually changes, so a same-size edit is still recorded.
 
-`agentdash memory` shows a cross-project board ranked by how far each
+`agentdash docs` shows a cross-project board ranked by how far each
 project's memory trails its recent work (git commit time and dirty-tree state
 when available, else file mtime), flags `stale` and — when a memory change
 landed while two or more live sessions shared the project — `⚠concurrent`
-(a mechanical risk signal, not proven authorship). `agentdash memory <repo|.>`
+(a mechanical risk signal, not proven authorship). `agentdash docs <repo|.>`
 prints that project's change log, newest last, each entry labelled
 `baseline` (the first time agentdash observed the file — it did not create it),
 `grew`, `shrunk`, or `same-size-rewrite`. `--json` emits the same data as a
 stable `schema_version: 1` document (cross-project board, or per-project log).
+
+Given a **file** instead of a repo, `agentdash docs <file>` prints that one
+file's change history: a `git log --follow` timeline (when, author, +/- lines,
+first diff hunk) when the file is tracked, or agentdash's own hash/size
+snapshots when it is not. Each change is attributed by correlating its time
+against Edit/Write tool calls in the transcripts — `by <agent> session <task>
+at <t>` when a matching edit is within five minutes, otherwise `outside any
+recorded agent session (human or other tool)`. This `--json` document is
+`schema_version: 2` (the command's one additive bump; the board and per-project
+log documents are unchanged at 1).
 
 **Exactly what it samples.** Repo-root `CLAUDE.md` and `AGENTS.md` only — no
 recursive crawl, no other markdown, no subdirectories. It reads each file only
@@ -317,7 +326,7 @@ live-`sessions` count at sample time — metadata and a hash, nothing more.
 It is **never pruned** — that is the point (long-term history) — so it grows by
 one line per real content change. It records no file contents, but project paths
 and names can themselves be sensitive; the file stays local and is yours to
-delete. (A future `agentdash memory compact` / `--forget <repo>` could trim it;
+delete. (A future `agentdash docs compact` / `--forget <repo>` could trim it;
 not built yet.)
 
 Local only, no network, read-only toward your files; the scope is deliberately
