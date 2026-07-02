@@ -106,7 +106,36 @@ agentdash health           per-agent warning roll-up; exit 0 if nothing flagged
 agentdash inspect          inventory config files (token cost, mtime, git-tracked)
 agentdash audit            config + context-rot findings (--handoff for a fix pack)
 agentdash context <row|pid>  the effective instruction stack for a live session
+agentdash trail <commands|files|secrets>  forensics from transcripts (--json/--csv)
 ```
+
+### Trust trail (`agentdash trail`)
+
+`agentdash trail` reconstructs, from transcripts only, what agents actually did
+on this box — read-only, and it never prints a secret in full.
+
+```
+agentdash trail commands --since 7d
+agentdash trail files --blast <session-file>
+agentdash trail secrets --json
+```
+
+- `trail commands` — every shell command an agent ran (timestamp, session, cwd,
+  command line). Codex rollouts also record per-turn approval and sandbox
+  policy, so commands that ran with **approvals off** (`approval_policy=never`)
+  or the **sandbox disabled** (`danger-full-access`) are flagged, and the count
+  of them is the headline number.
+- `trail files` — every Edit/Write (and codex `apply_patch`): timestamp,
+  session, path. `--blast <session>` shows the file set one session touched and
+  marks which of those files currently differ in `git status`.
+- `trail secrets` — scans transcripts for high-confidence secret patterns (AWS
+  keys, GitHub/Slack/OpenAI/Anthropic tokens, Google API keys, private-key
+  headers, JWTs). It reports a **masked** value (first 4 chars + `…`), the
+  pattern name, the session file, and the age — the full value is never printed
+  or written anywhere. It offers no scrubber: rotate the credential, then trim
+  history and delete the session file.
+
+All three take `--since` and `--project`, and export `--json` and `--csv`.
 
 ### Config inventory & context rot (`inspect`, `audit`, `context`)
 
@@ -501,8 +530,11 @@ matching snippets to your terminal (and `--tools` widens the search to tool
 payloads, which may include pasted secrets). `agentdash usage` reads prompt
 text too — it shows each session's task in the attribution table — but reports
 only token counts, never credentials, and makes no network call. Nothing
-leaves the machine and no new file is written by `grep` or `usage`. Mind
-screen-sharing and log shipping.
+leaves the machine and no new file is written by `grep` or `usage`.
+`agentdash trail` also reads transcript text (commands, file paths, and — for
+the secrets scan — the conversation body); `trail secrets` masks every match to
+its first 4 characters and never prints or persists the full value, and no
+`trail` subcommand writes a file. Mind screen-sharing and log shipping.
 
 ## License
 

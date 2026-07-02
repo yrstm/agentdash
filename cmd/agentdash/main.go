@@ -30,6 +30,7 @@ import (
 	"github.com/yrstm/agentdash/internal/parse"
 	"github.com/yrstm/agentdash/internal/paths"
 	"github.com/yrstm/agentdash/internal/render"
+	"github.com/yrstm/agentdash/internal/trail"
 	"github.com/yrstm/agentdash/internal/ui"
 	"github.com/yrstm/agentdash/internal/usage"
 )
@@ -157,6 +158,11 @@ usage: agentdash [flags | subcommand]
                      the effective instruction stack for a live session: memory
                      chain, hooks, MCP servers (with token estimates), the
                      model window + current CTX%, and compaction events
+  trail <commands|files|secrets> [--since 7d] [--project <dir>] [--json|--csv]
+                     forensics from transcripts only: shell commands agents ran
+                     (with a codex approvals-off/sandbox-off headline), Edit/Write
+                     file changes (files --blast <session> marks git-dirty ones),
+                     and masked high-confidence secrets found in conversations
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -208,6 +214,9 @@ func main() {
 			return
 		case "context":
 			runContext(args[1:])
+			return
+		case "trail":
+			runTrail(args[1:])
 			return
 		}
 	}
@@ -666,6 +675,159 @@ func runAudit(rest []string) {
 		return
 	}
 	fmt.Print(render.DriftFindings(findings, proj, theme))
+}
+
+// runTrail drives the `agentdash trail` subcommand: read-only forensics from
+// transcripts — commands run, files written, secrets pasted.
+func runTrail(rest []string) {
+	if len(rest) == 0 {
+		fmt.Fprintln(os.Stderr, "agentdash: trail needs a subcommand: commands | files | secrets")
+		os.Exit(2)
+	}
+	sub := rest[0]
+	rest = rest[1:]
+	var jsonMode, csvMode bool
+	var project, since, blast string
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			jsonMode = true
+		case "--csv":
+			csvMode = true
+		case "--project":
+			if i+1 < len(rest) {
+				i++
+				project = rest[i]
+			}
+		case "--since":
+			if i+1 < len(rest) {
+				i++
+				since = rest[i]
+			}
+		case "--blast":
+			if i+1 < len(rest) {
+				i++
+				blast = rest[i]
+			}
+		}
+	}
+	now := time.Now().Unix()
+	var sinceTS int64
+	if since != "" {
+		d, ok := parseSince(since)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "agentdash: trail --since takes a window like 30m, 4h, 7d")
+			os.Exit(2)
+		}
+		sinceTS = now - d
+	}
+	home, _ := os.UserHomeDir()
+	opt := trail.Options{Home: home, Since: sinceTS, Project: project, Now: now}
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+
+	switch sub {
+	case "commands":
+		cmds := trail.Commands(opt)
+		switch {
+		case csvMode:
+			fmt.Print(string(trail.CommandsCSV(cmds)))
+		case jsonMode:
+			out, err := trail.CommandsJSON(cmds, trail.UnsafeCount(cmds))
+			emitJSON(out, err)
+		default:
+			printTrailCommands(cmds, theme, now)
+		}
+	case "files":
+		files := trail.Files(opt)
+		if blast != "" {
+			bl := trail.BlastFor(files, blast)
+			printTrailBlast(bl, blast, theme, home)
+			return
+		}
+		switch {
+		case csvMode:
+			fmt.Print(string(trail.FilesCSV(files)))
+		case jsonMode:
+			out, err := trail.FilesJSON(files)
+			emitJSON(out, err)
+		default:
+			printTrailFiles(files, theme, now)
+		}
+	case "secrets":
+		secrets := trail.Secrets(opt)
+		switch {
+		case csvMode:
+			fmt.Print(string(trail.SecretsCSV(secrets)))
+		case jsonMode:
+			out, err := trail.SecretsJSON(secrets)
+			emitJSON(out, err)
+		default:
+			printTrailSecrets(secrets, theme, now)
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "agentdash: trail: unknown subcommand %q (commands | files | secrets)\n", sub)
+		os.Exit(2)
+	}
+}
+
+func trailAge(now, ts int64) string {
+	if ts == 0 {
+		return "?"
+	}
+	return parse.Ago(now - ts)
+}
+
+func printTrailCommands(cmds []trail.Command, t render.Theme, now int64) {
+	unsafe := trail.UnsafeCount(cmds)
+	fmt.Printf("%sTRAIL commands%s · %d command(s) · %s%d ran with approvals/sandbox off%s\n\n",
+		t.B, t.N, len(cmds), t.Y, unsafe, t.N)
+	for _, c := range cmds {
+		flag := ""
+		if c.ApprovalsOff {
+			flag += " " + t.R + "[approvals off]" + t.N
+		}
+		if c.SandboxOff {
+			flag += " " + t.R + "[sandbox off]" + t.N
+		}
+		fmt.Printf("  %s%-4s%s %-6s %s%s%s%s\n", t.D, trailAge(now, c.TS), t.N, c.Agent, t.D, shortenHomeAbs(c.Cwd), t.N, flag)
+		fmt.Printf("       %s\n", parse.Clean(c.Command, 160))
+	}
+}
+
+func printTrailFiles(files []trail.FileEdit, t render.Theme, now int64) {
+	fmt.Printf("%sTRAIL files%s · %d edit(s)\n\n", t.B, t.N, len(files))
+	for _, f := range files {
+		fmt.Printf("  %s%-4s%s %-6s %-10s %s\n", t.D, trailAge(now, f.TS), t.N, f.Agent, f.Op, shortenHomeAbs(f.Path))
+	}
+}
+
+func printTrailBlast(bl []trail.Blast, session string, t render.Theme, home string) {
+	fmt.Printf("%sTRAIL blast%s · files touched by session %s%s%s\n\n", t.B, t.N, t.D, session, t.N)
+	if len(bl) == 0 {
+		fmt.Println("  no file edits recorded for that session")
+		return
+	}
+	for _, b := range bl {
+		mark := t.D + "clean" + t.N
+		if b.GitDirty {
+			mark = t.Y + "git-dirty" + t.N
+		}
+		fmt.Printf("  %-10s %s  %s\n", mark, shortenHome(b.Path, home), t.D+b.Op+t.N)
+	}
+}
+
+func printTrailSecrets(secrets []trail.Secret, t render.Theme, now int64) {
+	fmt.Printf("%sTRAIL secrets%s · %d high-confidence match(es) %s(values masked; never printed in full)%s\n\n",
+		t.B, t.N, len(secrets), t.D, t.N)
+	if len(secrets) == 0 {
+		fmt.Printf("  %snone found%s\n", t.D, t.N)
+		return
+	}
+	for _, s := range secrets {
+		fmt.Printf("  %s%-4s%s %-16s %s%s%s  %s%s%s\n",
+			t.D, trailAge(now, s.TS), t.N, s.Pattern, t.R, s.Masked, t.N, t.D, s.Session, t.N)
+	}
+	fmt.Printf("\n  %srotate anything real, then trim history (Claude Code cleanupPeriodDays) and delete the session file%s\n", t.D, t.N)
 }
 
 // runContext drives the `agentdash context <row|pid>` subcommand: the effective
