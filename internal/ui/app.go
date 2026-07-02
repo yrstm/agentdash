@@ -112,7 +112,8 @@ type model struct {
 	sortMode   int
 	hSortMode  int
 	prevStatus map[int]string
-	hookPrev   map[int]string // last tick's status, for event-hook transitions
+	hookPrev   map[int]string    // last tick's status, for event-hook transitions
+	hookLast   map[hookKey]int64 // last fire time per session+event, for debounce
 	procPids   string
 }
 
@@ -145,6 +146,7 @@ func Run(cfg Config) error {
 		filter:     lineInput{prompt: "/"},
 		label:      lineInput{prompt: "label: "},
 		prevStatus: map[int]string{},
+		hookLast:   map[hookKey]int64{},
 	}
 	m.width, m.height = termSize()
 
@@ -388,7 +390,7 @@ func (m *model) refresh(b *board.Board) {
 	if m.cfg.Hooks.Any() {
 		// hookPrev is the immediately-previous board, so a transition fires
 		// exactly once — unlike prevStatus, which lags for the changed-row render.
-		fireHooks(m.cfg.Hooks, m.hookPrev, b)
+		fireHooks(m.cfg.Hooks, m.hookPrev, b, m.hookLast, time.Now().Unix())
 	}
 	if m.b != nil {
 		for _, r := range m.b.Rows {
@@ -993,6 +995,7 @@ func max(a, b int) int {
 // the v1 behavior of re-rendering every interval.
 func Headless(cfg Config) {
 	var prev map[int]string
+	hookLast := map[hookKey]int64{}
 	for {
 		b := board.Collect(time.Now().Unix(), board.Options{
 			Expand: cfg.Expand, Tree: cfg.Tree, Sections: true})
@@ -1004,7 +1007,7 @@ func Headless(cfg Config) {
 			}
 		}
 		if cfg.Hooks.Any() {
-			fireHooks(cfg.Hooks, prev, b)
+			fireHooks(cfg.Hooks, prev, b, hookLast, time.Now().Unix())
 		}
 		prev = statusMap(b)
 		if !cfg.Expand {

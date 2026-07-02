@@ -99,7 +99,60 @@ agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
 agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
+agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
+agentdash du               disk triage: agent file sizes by category (--json for tooling)
 ```
+
+### Search past sessions (`agentdash grep`)
+
+Find the old conversation where something was already worked out. `agentdash
+grep <pattern>` searches the message text of every Claude and Codex transcript
+and prints one line per matching session, newest first:
+
+```
+agentdash grep "flaky checkout"
+agentdash grep "rate limit" --role assistant --project api --since 7d -n 20
+agentdash grep "AKIA" --tools --json
+```
+
+`<pattern>` is a Go regular expression (RE2). Each hit shows the session age,
+agent kind, project directory, a `N×` match count, the session title, the
+best matching snippet, and a paste-ready `resume` command. Flags:
+
+- `--role user|assistant` — search only that side of the conversation.
+- `--project <dir>` — keep sessions whose cwd or repo root contains `<dir>`.
+- `--since 30m|4h|7d` — skip sessions with no activity in the window.
+- `-n <max>` — stop after this many matching sessions (newest first), so a
+  broad pattern on a large history returns quickly.
+- `--tools` — also search tool-call payloads (Bash commands, tool results),
+  not just message text.
+- `--json` — schema_version 1 document for tooling.
+
+By default only human/assistant **message text** is searched; tool payloads
+(and any secrets pasted into them) are searched only with `--tools`. Subagent
+transcripts fold under their parent session rather than showing as their own
+hit.
+
+### Disk triage (`agentdash du`)
+
+`agentdash du` breaks down the disk the agent CLIs accumulate, largest
+category first, and for the transcript store lists the ten biggest sessions:
+
+```
+agentdash du
+agentdash du --json
+```
+
+Each category shows its size, one sentence on what it is and whether deleting
+it is safe, the relevant retention knob where one exists (e.g. Claude Code's
+`cleanupPeriodDays`), and a suggested cleanup command. Categories covered:
+`~/.claude/projects`, `~/.claude/file-history`, `~/.claude/shell-snapshots`,
+`~/.claude/todos`, `~/.claude.json`, `~/.codex/sessions`, `~/.codex/log`, and
+the MCP log cache (`~/.cache/claude-cli-nodejs` on Linux,
+`~/Library/Caches/claude-cli-nodejs` on macOS); on macOS it also accounts for
+the desktop app's `~/Library/Application Support/Claude` and
+`~/Library/Logs/Claude`. **`du` never deletes anything** — the cleanup lines
+are suggestions for you to run.
 
 ### Memory drift (`agentdash memory`)
 
@@ -211,15 +264,22 @@ wrapped in an envelope:
 `attached` is whether someone is on its tmux pane (so a notifier can stay
 quiet for agents you are already watching). For quick shell one-liners the
 headline fields are also in the environment: `AGENTDASH_EVENT`,
-`AGENTDASH_PID`, `AGENTDASH_TASK`. A `stuck?` transition counts as
-needs-you too, so with both hooks set it fires both events; deduplicate on
-`event` if that matters. Commands run non-blocking and are bounded by a
-10s timeout, so a slow or wedged hook never stalls the board.
+`AGENTDASH_PID`, `AGENTDASH_TASK`, `AGENTDASH_AGENT`, `AGENTDASH_CWD`, and
+`AGENTDASH_STATUS`. A `stuck?` transition counts as needs-you too, so with
+both hooks set it fires both events; deduplicate on `event` if that matters.
+Hooks are edge-triggered (they fire on entry into a state, not while it
+persists) and debounced per session: the same event will not re-fire for the
+same agent within 60s, so a status that flickers does not spam you. Commands
+run non-blocking and are bounded by a 10s timeout, so a slow or wedged hook
+never stalls the board.
 
-A minimal example notifier lives in `integrations/notify-example.sh`:
+A minimal example notifier lives in `integrations/notify-example.sh`, or use
+your desktop/phone notifier directly:
 
 ```sh
 agentdash -w --on-needs-you 'integrations/notify-example.sh'
+agentdash -w --on-needs-you 'notify-send "agent $AGENTDASH_AGENT" "$AGENTDASH_STATUS: $AGENTDASH_TASK"'
+agentdash -w --on-needs-you 'curl -fsS -d "$AGENTDASH_STATUS: $AGENTDASH_TASK" https://ntfy.sh/your-topic'
 ```
 
 To let another agent read and triage the fleet through the same CLI (no
@@ -341,8 +401,11 @@ project directory no agent or tmux pane is using.
 ## Privacy
 
 The TASK column shows prompt text and the cache at
-`~/.cache/agentdash/usage.json` persists it (mode 0600). Mind
-screen-sharing and log shipping.
+`~/.cache/agentdash/usage.json` persists it (mode 0600). `agentdash grep`
+reads the prompt and reply text of your transcripts to search them; it prints
+matching snippets to your terminal (and `--tools` widens the search to tool
+payloads, which may include pasted secrets). Nothing leaves the machine and
+no new file is written by `grep`. Mind screen-sharing and log shipping.
 
 ## License
 

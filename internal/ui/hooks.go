@@ -29,6 +29,19 @@ func (h Hooks) Any() bool { return h.OnNeedsYou != "" || h.OnStuck != "" }
 // process or goroutine across the session.
 const hookTimeout = 10 * time.Second
 
+// hookDebounce is the minimum gap between fires for the same session and event.
+// Edge detection already fires once per transition; this guards the case where
+// a status flickers (e.g. waiting->working->waiting) and re-crosses the same
+// edge within a minute.
+const hookDebounce = 60 * time.Second
+
+// hookKey identifies a debounce bucket: one session (pid) and event name, so a
+// working->stuck? transition still raises both needs_you and stuck at once.
+type hookKey struct {
+	pid  int
+	name string
+}
+
 // hookEvent is one fired transition: the event name, the command to run,
 // and the row it fired for.
 type hookEvent struct {
@@ -126,14 +139,37 @@ func runHook(ev hookEvent) {
 			"AGENTDASH_EVENT="+ev.name,
 			"AGENTDASH_PID="+strconv.Itoa(ev.row.PID),
 			"AGENTDASH_TASK="+ev.row.Task,
+			"AGENTDASH_AGENT="+ev.row.Kind,
+			"AGENTDASH_CWD="+ev.row.Cwd,
+			"AGENTDASH_STATUS="+ev.row.Status,
 		)
 		_ = cmd.Run() // fire-and-forget: a hook's own output is its concern
 	}()
 }
 
-// fireHooks runs every command implied by the transition to nb.
-func fireHooks(h Hooks, prev map[int]string, nb *board.Board) {
-	for _, ev := range detectHooks(h, prev, nb) {
+// debounceHooks drops events whose (session, event) fired less than
+// hookDebounce ago, recording the fire time of those it keeps. Pure and
+// unit-tested; last is mutated in place so the caller carries state across
+// ticks. now is epoch seconds.
+func debounceHooks(events []hookEvent, last map[hookKey]int64, now int64) []hookEvent {
+	const gap = int64(hookDebounce / time.Second)
+	var kept []hookEvent
+	for _, ev := range events {
+		k := hookKey{ev.row.PID, ev.name}
+		if t, ok := last[k]; ok && now-t < gap {
+			continue
+		}
+		last[k] = now
+		kept = append(kept, ev)
+	}
+	return kept
+}
+
+// fireHooks runs every command implied by the transition to nb, after the
+// per-session debounce. last carries fire times across ticks; now is epoch
+// seconds.
+func fireHooks(h Hooks, prev map[int]string, nb *board.Board, last map[hookKey]int64, now int64) {
+	for _, ev := range debounceHooks(detectHooks(h, prev, nb), last, now) {
 		runHook(ev)
 	}
 }

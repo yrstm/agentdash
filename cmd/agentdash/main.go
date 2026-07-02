@@ -1,4 +1,4 @@
-// agentdash: `w` for your AI agents. Linux-only, single static binary.
+// agentdash: `w` for your AI agents. Linux and macOS, single static binary.
 // Observes agents started any way (terminal, tmux, ssh, cron): read-only,
 // zero-config, no daemon, zero API calls. It never launches or owns
 // sessions. README.md documents every heuristic.
@@ -20,7 +20,9 @@ import (
 	"github.com/yrstm/agentdash/internal/board"
 	"github.com/yrstm/agentdash/internal/config"
 	"github.com/yrstm/agentdash/internal/drift"
+	"github.com/yrstm/agentdash/internal/du"
 	"github.com/yrstm/agentdash/internal/eventlog"
+	"github.com/yrstm/agentdash/internal/grep"
 	"github.com/yrstm/agentdash/internal/jsonout"
 	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
@@ -86,7 +88,7 @@ func staleDays() int {
 	return 14
 }
 
-const usageText = `agentdash: ` + "`w`" + ` for your AI agents (Linux-only, read-only, no daemon)
+const usageText = `agentdash: ` + "`w`" + ` for your AI agents (Linux/macOS, read-only, no daemon)
 
 usage: agentdash [flags | subcommand]
   (no args)          render the board once
@@ -103,8 +105,9 @@ usage: agentdash [flags | subcommand]
                      (no one attached to its pane) flips to needs-you
                      to waiting (needs tmux 3.3+ ` + "`allow-passthrough on`" + `)
   --on-needs-you <cmd>  with -w: run <cmd> when an agent enters a needs-you
-                        state; the agent row (schema_version 1) arrives on
-                        stdin, AGENTDASH_EVENT/PID/TASK in the env
+                        state (edge-triggered, debounced 60s per session); the
+                        agent row (schema_version 1) arrives on stdin, with
+                        AGENTDASH_EVENT/PID/TASK/AGENT/CWD/STATUS in the env
   --on-stuck <cmd>      with -w: like --on-needs-you, when status hits stuck?
   --any-waiting      exit 0 if any session needs you, 1 otherwise (for scripts)
   go [row|pid]       jump to the agent's tmux pane (no arg: first that needs you)
@@ -128,6 +131,13 @@ usage: agentdash [flags | subcommand]
                      config audit: finds instructions repeated in prompts but
                      absent from config (missing_rule), and config references
                      to paths that no longer exist (stale_rule)
+  grep <pattern> [--role user|assistant] [--project <dir>] [--since 7d]
+       [-n N] [--tools] [--json]
+                     search past sessions of both agents (regexp over message
+                     text; --tools widens it to tool payloads). One line per
+                     matching session, newest first, with a resume command
+  du [--json]        disk triage: agent file sizes by category, largest first,
+                     with what each is and a suggested cleanup (never deletes)
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -164,6 +174,12 @@ func main() {
 			return
 		case "audit":
 			runAudit(args[1:])
+			return
+		case "grep":
+			runGrep(args[1:])
+			return
+		case "du":
+			runDu(args[1:])
 			return
 		}
 	}
@@ -608,6 +624,181 @@ func runAudit(rest []string) {
 		return
 	}
 	fmt.Print(render.DriftFindings(findings, proj, theme))
+}
+
+// runDu drives the `agentdash du` subcommand: a size breakdown of the files
+// the agent CLIs accumulate, largest first, with cleanup guidance. Read-only —
+// it prints suggested commands but never deletes.
+func runDu(rest []string) {
+	jsonMode := false
+	for _, a := range rest {
+		if a == "--json" {
+			jsonMode = true
+		}
+	}
+	home, _ := os.UserHomeDir()
+	res := du.Collect(home, time.Now().Unix())
+	if jsonMode {
+		out, err := du.JSON(res)
+		emitJSON(out, err)
+		return
+	}
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	printDu(res, theme, home)
+}
+
+func printDu(res du.Result, t render.Theme, home string) {
+	fmt.Printf("%sagentdash du%s · total %s%s%s · nothing is deleted, these are suggestions\n\n",
+		t.B, t.N, t.B, du.HumanBytes(res.Total), t.N)
+	for _, c := range res.Categories {
+		if !c.Present {
+			fmt.Printf("  %s%6s%s  %s%-22s%s %s(absent)%s\n",
+				t.D, "-", t.N, t.D, c.Name, t.N, t.D, t.N)
+			continue
+		}
+		fmt.Printf("  %s%6s%s  %s%-22s%s %s%s (%d files)%s\n",
+			t.B, du.HumanBytes(c.Bytes), t.N, t.B, c.Name, t.N, t.D, shortenHome(c.Path, home), c.Files, t.N)
+		fmt.Printf("          %s%s%s\n", t.D, c.What, t.N)
+		for _, it := range c.Top {
+			fmt.Printf("            %s%6s  %s%s\n", t.D, du.HumanBytes(it.Bytes), shortenHome(it.Path, home), t.N)
+		}
+		if c.Cleanup != "" {
+			fmt.Printf("          %scleanup:%s %s\n", t.Y, t.N, c.Cleanup)
+		}
+	}
+}
+
+// runGrep drives the `agentdash grep` subcommand: a structured regexp search
+// across both agents' transcripts, newest session first.
+func runGrep(rest []string) {
+	var patStr, role, project, since string
+	var jsonMode, tools bool
+	maxN := 0
+	for i := 0; i < len(rest); i++ {
+		switch a := rest[i]; a {
+		case "--json":
+			jsonMode = true
+		case "--tools":
+			tools = true
+		case "--role":
+			if i+1 < len(rest) {
+				i++
+				role = rest[i]
+			}
+		case "--project":
+			if i+1 < len(rest) {
+				i++
+				project = rest[i]
+			}
+		case "--since":
+			if i+1 < len(rest) {
+				i++
+				since = rest[i]
+			}
+		case "-n":
+			if i+1 < len(rest) {
+				if n, err := strconv.Atoi(rest[i+1]); err == nil && n > 0 {
+					maxN = n
+					i++
+				}
+			}
+		default:
+			if strings.HasPrefix(a, "-") && patStr != "" {
+				fmt.Fprintf(os.Stderr, "agentdash: grep: unknown flag %s\n", a)
+				os.Exit(2)
+			}
+			if patStr == "" {
+				patStr = a
+			}
+		}
+	}
+	if patStr == "" {
+		fmt.Fprintln(os.Stderr, "agentdash: grep needs a pattern")
+		os.Exit(2)
+	}
+	if role != "" && role != "user" && role != "assistant" {
+		fmt.Fprintln(os.Stderr, "agentdash: grep --role takes user or assistant")
+		os.Exit(2)
+	}
+	re, err := regexp.Compile(patStr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agentdash: grep: bad pattern: %v\n", err)
+		os.Exit(2)
+	}
+	now := time.Now().Unix()
+	var sinceTS int64
+	if since != "" {
+		d, ok := parseSince(since)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "agentdash: grep --since takes a window like 30m, 4h, 7d")
+			os.Exit(2)
+		}
+		sinceTS = now - d
+	}
+	home, _ := os.UserHomeDir()
+	res := grep.Search(grep.Options{
+		Home: home, Pattern: re, Role: role, Project: project,
+		Since: sinceTS, Max: maxN, Tools: tools, Now: now,
+	})
+	if jsonMode {
+		out, err := grep.JSON(res, patStr)
+		emitJSON(out, err)
+		return
+	}
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	printGrep(res, theme, home)
+}
+
+func printGrep(res grep.Result, t render.Theme, home string) {
+	if len(res.Hits) == 0 {
+		fmt.Println("  no matching sessions")
+		return
+	}
+	for _, h := range res.Hits {
+		where := shortenHome(h.Cwd, home)
+		if where == "" {
+			where = "-"
+		}
+		fmt.Printf("  %s%-4s%s %-6s %s%s%s  %s%d×%s  %s%s%s\n",
+			t.D, parse.Ago(h.AgeSecs), t.N, h.Agent,
+			t.V, where, t.N, t.Y, h.Matches, t.N, t.B, h.Title, t.N)
+		if h.Snippet != "" {
+			fmt.Printf("       %s%s%s\n", t.D, h.Snippet, t.N)
+		}
+		fmt.Printf("       resume: %s\n", h.Resume)
+	}
+	if res.Truncated {
+		fmt.Printf("\n  %s(stopped at -n; pass a larger -n or narrow with --project/--since)%s\n", t.D, t.N)
+	}
+}
+
+// shortenHome renders an absolute path with ~ for the home dir, matching the
+// board's cwd column.
+func shortenHome(p, home string) string {
+	if home != "" && (p == home || strings.HasPrefix(p, home+"/")) {
+		return "~" + strings.TrimPrefix(p, home)
+	}
+	return p
+}
+
+var sinceSpecRe = regexp.MustCompile(`^([0-9]+)([mhd])$`)
+
+// parseSince turns a 30m/4h/7d window into seconds.
+func parseSince(spec string) (int64, bool) {
+	m := sinceSpecRe.FindStringSubmatch(strings.TrimSpace(spec))
+	if m == nil {
+		return 0, false
+	}
+	n, _ := strconv.ParseInt(m[1], 10, 64)
+	switch m[2] {
+	case "m":
+		return n * 60, true
+	case "h":
+		return n * 3600, true
+	case "d":
+		return n * 86400, true
+	}
+	return 0, false
 }
 
 var recapSpecRe = regexp.MustCompile(`^([0-9]+)([mhd])$`)
