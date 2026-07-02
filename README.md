@@ -101,6 +101,7 @@ agentdash recap [4h]       what changed since you last looked
 agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
 agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
 agentdash du               disk triage: agent file sizes by category (--json for tooling)
+agentdash usage            local token-spend estimate: windows, burn, attribution
 ```
 
 ### Search past sessions (`agentdash grep`)
@@ -153,6 +154,34 @@ the MCP log cache (`~/.cache/claude-cli-nodejs` on Linux,
 the desktop app's `~/Library/Application Support/Claude` and
 `~/Library/Logs/Claude`. **`du` never deletes anything** — the cleanup lines
 are suggestions for you to run.
+
+### Usage estimates (`agentdash usage`)
+
+`agentdash usage` estimates token spend from the per-message usage blocks the
+transcripts already record. It reads no credentials and makes no API call, so
+**everything it prints is a local estimate** — it cannot see provider-side
+limits, spend on other machines, or anything the transcripts do not record,
+and it says so in its header.
+
+```
+agentdash usage
+agentdash usage --limit 20000000
+agentdash usage --json
+```
+
+It reports, per model, rolling **5-hour** and **7-day** token totals (input
+counts include cache tokens, matching the board); a **burn rate** in
+tokens/min over the last 30 minutes; a **per-session attribution** table for
+the 5h window (share %, agent, model, in/out, task — subagent transcripts are
+tagged); and a **per-project cache-hit ratio** over 7 days, flagging a project
+whose ratio dropped sharply in the last day (usually an always-loaded file
+changed and stopped hitting cache). With `--limit N` (or
+`AGENTDASH_USAGE_LIMIT`) it projects when the 5h window would reach that cap at
+the current burn rate; without one it stays silent about limits it cannot know.
+
+Usage blocks are deduplicated by message id. Codex reports cumulative counts,
+so its per-turn delta (`last_token_usage`) is what lands in the windows; Codex
+does not split cache read from creation, so the cache-hit stats are Claude-only.
 
 ### Memory drift (`agentdash memory`)
 
@@ -404,8 +433,11 @@ The TASK column shows prompt text and the cache at
 `~/.cache/agentdash/usage.json` persists it (mode 0600). `agentdash grep`
 reads the prompt and reply text of your transcripts to search them; it prints
 matching snippets to your terminal (and `--tools` widens the search to tool
-payloads, which may include pasted secrets). Nothing leaves the machine and
-no new file is written by `grep`. Mind screen-sharing and log shipping.
+payloads, which may include pasted secrets). `agentdash usage` reads prompt
+text too — it shows each session's task in the attribution table — but reports
+only token counts, never credentials, and makes no network call. Nothing
+leaves the machine and no new file is written by `grep` or `usage`. Mind
+screen-sharing and log shipping.
 
 ## License
 

@@ -29,6 +29,7 @@ import (
 	"github.com/yrstm/agentdash/internal/paths"
 	"github.com/yrstm/agentdash/internal/render"
 	"github.com/yrstm/agentdash/internal/ui"
+	"github.com/yrstm/agentdash/internal/usage"
 )
 
 var version = "2.3.1-dev"
@@ -138,6 +139,11 @@ usage: agentdash [flags | subcommand]
                      matching session, newest first, with a resume command
   du [--json]        disk triage: agent file sizes by category, largest first,
                      with what each is and a suggested cleanup (never deletes)
+  usage [--limit N] [--json]
+                     local token-spend estimate from transcripts: 5h/7d totals
+                     per model, 30m burn rate, per-session attribution, cache
+                     stats. Estimate only — never provider-reported. --limit N
+                     sets a 5h cap so it can project when the window fills
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -180,6 +186,9 @@ func main() {
 			return
 		case "du":
 			runDu(args[1:])
+			return
+		case "usage":
+			runUsage(args[1:])
 			return
 		}
 	}
@@ -624,6 +633,99 @@ func runAudit(rest []string) {
 		return
 	}
 	fmt.Print(render.DriftFindings(findings, proj, theme))
+}
+
+// runUsage drives the `agentdash usage` subcommand: a local, credential-free
+// token-spend estimate from transcripts. It never reports provider figures.
+func runUsage(rest []string) {
+	jsonMode := false
+	var limit int64
+	if v := os.Getenv("AGENTDASH_USAGE_LIMIT"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			limit = n
+		}
+	}
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			jsonMode = true
+		case "--limit":
+			if i+1 < len(rest) {
+				if n, err := strconv.ParseInt(rest[i+1], 10, 64); err == nil && n > 0 {
+					limit = n
+					i++
+				}
+			}
+		}
+	}
+	home, _ := os.UserHomeDir()
+	rep := usage.Collect(usage.Options{Home: home, Now: time.Now().Unix(), Limit: limit})
+	if jsonMode {
+		out, err := usage.JSON(rep)
+		emitJSON(out, err)
+		return
+	}
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	printUsage(rep, theme)
+}
+
+func printUsage(rep usage.Report, t render.Theme) {
+	fmt.Printf("%sagentdash usage%s · %sestimate from local transcripts, not provider-reported%s\n",
+		t.B, t.N, t.D, t.N)
+	fmt.Printf("%scannot see provider-side limits, other machines, or spend the transcripts don't record%s\n\n", t.D, t.N)
+
+	fmt.Printf("  5h %s%s%s · 7d %s%s%s · burn %s%s%s/min (last 30m)\n",
+		t.B, parse.Hum(rep.Total5h), t.N, t.B, parse.Hum(rep.Total7d), t.N,
+		t.B, parse.Hum(int64(rep.BurnPerMin)), t.N)
+	switch {
+	case rep.Limit > 0 && rep.ProjFillSecs > 0:
+		fmt.Printf("  at this rate the 5h window (cap %s) fills in ~%s\n",
+			parse.Hum(rep.Limit), parse.Ago(rep.ProjFillSecs))
+	case rep.Limit > 0:
+		fmt.Printf("  5h window is %s of the %s cap; not burning right now\n",
+			parse.Hum(rep.Total5h), parse.Hum(rep.Limit))
+	default:
+		fmt.Printf("  %spass --limit N (or AGENTDASH_USAGE_LIMIT) to project when the 5h window fills%s\n", t.D, t.N)
+	}
+
+	if len(rep.Models) > 0 {
+		fmt.Printf("\n  %sby model%s (in incl. cache / out)\n", t.B, t.N)
+		for _, m := range rep.Models {
+			fmt.Printf("    %-14s 5h %s/%s · 7d %s/%s\n", m.Model,
+				parse.Hum(m.In5h), parse.Hum(m.Out5h), parse.Hum(m.In7d), parse.Hum(m.Out7d))
+		}
+	}
+
+	if len(rep.Sessions) > 0 {
+		fmt.Printf("\n  %stop sessions, 5h window%s (share · agent · model · in/out · task)\n", t.B, t.N)
+		for _, s := range rep.Sessions {
+			tag := ""
+			if s.IsSubagent {
+				tag = " (subagent)"
+			}
+			fmt.Printf("    %s%4.0f%%%s %-6s %-12s %s/%s  %s%s%s%s\n",
+				t.Y, s.SharePct, t.N, s.Agent, s.Model,
+				parse.Hum(s.In), parse.Hum(s.Out), t.B, parse.Clean(s.Title, 48), tag, t.N)
+		}
+	}
+
+	if len(rep.Projects) > 0 {
+		fmt.Printf("\n  %scache hit ratio, 7d%s (cache read / (read+creation))\n", t.B, t.N)
+		for _, p := range rep.Projects {
+			line := fmt.Sprintf("    %-28s %3.0f%%", shortenHomeAbs(p.Project), 100*p.HitRatio)
+			if p.Dropped {
+				line += fmt.Sprintf("  %s⚠ dropped: last-day %.0f%% vs prior %.0f%% — an always-loaded file likely changed%s",
+					t.Y, 100*p.RecentRatio, 100*p.PriorRatio, t.N)
+			}
+			fmt.Println(line)
+		}
+	}
+}
+
+// shortenHomeAbs shortens a project path with ~ using the current home.
+func shortenHomeAbs(p string) string {
+	home, _ := os.UserHomeDir()
+	return shortenHome(p, home)
 }
 
 // runDu drives the `agentdash du` subcommand: a size breakdown of the files
