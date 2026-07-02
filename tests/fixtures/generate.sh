@@ -19,8 +19,17 @@ DEST=${1:?usage: tests/fixtures/generate.sh <dest-dir> [seed] [ref-epoch]}
 SEED=${2:-1}
 REF=${3:-$(date +%s)}
 
-iso() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.000Z; } # epoch -> claude/codex timestamp
-ago() { echo $(( REF - $1 )); }                     # seconds-before-ref -> epoch
+# Portable epoch formatting: GNU date wants `-d @epoch`, BSD (macOS) wants
+# `-r epoch`. Detect once so the fixture generator runs on both CI runners.
+if date -u -r 0 +%Y >/dev/null 2>&1; then DATE_MODE=bsd; else DATE_MODE=gnu; fi
+fmt_epoch() { # $1=epoch $2=+format
+  if [ "$DATE_MODE" = bsd ]; then date -u -r "$1" "$2"; else date -u -d "@$1" "$2"; fi
+}
+iso() { fmt_epoch "$1" +%Y-%m-%dT%H:%M:%S.000Z; } # epoch -> claude/codex timestamp
+ago() { echo $(( REF - $1 )); }                    # seconds-before-ref -> epoch
+# Set a file's mtime from an epoch. `touch -t` (CCYYMMDDhhmm.SS) is accepted by
+# both GNU and BSD touch, unlike GNU-only `touch -d @epoch`.
+touch_at() { touch -t "$(fmt_epoch "$1" +%Y%m%d%H%M.%S)" "$2"; }
 
 rm -rf "$DEST"
 mkdir -p "$DEST"
@@ -43,7 +52,7 @@ cat > "$CLAUDE_DIR/CLAUDE.md" <<'EOF'
 Synthetic global memory file for tests. Prefer rebasing local branches over
 merge commits.
 EOF
-touch -d "@$(ago $((30 * 86400)))" "$CLAUDE_DIR/CLAUDE.md" # a long-standing rule file
+touch_at "$(ago $((30 * 86400)))" "$CLAUDE_DIR/CLAUDE.md" # a long-standing rule file
 
 # ---- project instruction files: a planted conflict + a dead path ----------
 # CLAUDE.md says tabs; the cursor rule says 2 spaces -- same topic, opposite
@@ -56,7 +65,7 @@ cat > "$PROJECT/CLAUDE.md" <<'EOF'
 Use tabs for indentation.
 See docs/setup.md for build steps.
 EOF
-touch -d "@$(ago $((14 * 86400)))" "$PROJECT/CLAUDE.md"
+touch_at "$(ago $((14 * 86400)))" "$PROJECT/CLAUDE.md"
 
 cat > "$PROJECT/.cursor/rules/style.mdc" <<'EOF'
 ---
@@ -64,7 +73,7 @@ description: style rules
 ---
 Always use 2 spaces for indentation.
 EOF
-touch -d "@$(ago $((14 * 86400)))" "$PROJECT/.cursor/rules/style.mdc"
+touch_at "$(ago $((14 * 86400)))" "$PROJECT/.cursor/rules/style.mdc"
 
 # ---- session-normal.jsonl: three usage-bearing assistant turns spread at
 # ~6d/~4h/~9min before ref, so a future A2 `usage` command has one point
@@ -84,7 +93,7 @@ cat > "$SESS_DIR/session-normal.jsonl" <<EOF
 {"type":"user","timestamp":"$(iso $((T_9MIN - 5)))","message":{"content":"finish up and confirm tests pass"}}
 {"type":"assistant","timestamp":"$(iso "$T_9MIN")","message":{"id":"msg_n2","model":"claude-opus-4-8","content":[{"type":"text","text":"Pagination added; tests green."}],"usage":{"input_tokens":150,"cache_creation_input_tokens":0,"cache_read_input_tokens":900,"output_tokens":40}}}
 EOF
-touch -d "@$T_9MIN" "$SESS_DIR/session-normal.jsonl"
+touch_at "$T_9MIN" "$SESS_DIR/session-normal.jsonl"
 
 # ---- session-truncated.jsonl: mid-write crash, seconds old -- last line has
 # no closing braces and no trailing newline. scanRegion (internal/parse/
@@ -101,7 +110,7 @@ printf '%s\n' \
   > "$SESS_DIR/session-truncated.jsonl"
 printf '{"type":"assistant","timestamp":"%s","message":{"id":"msg_t2","model":"claude-sonnet-4-6","content":[{"type":"tool_use","name":"Bash","input":{"command":"vault rotate' \
   "$(iso "$T_10S")" >> "$SESS_DIR/session-truncated.jsonl"
-touch -d "@$T_10S" "$SESS_DIR/session-truncated.jsonl"
+touch_at "$T_10S" "$SESS_DIR/session-truncated.jsonl"
 
 # ---- session-oversized.jsonl: one line over scanWindow (1<<20 bytes in
 # internal/parse/scan.go), generated in-line rather than checked into the
@@ -117,7 +126,7 @@ filler=$(head -c 1500000 /dev/zero | tr '\0' "$fill_char")
   printf '{"type":"user","timestamp":"%s","message":{"content":"pasted this by mistake: %s"}}\n' "$(iso "$T_125S")" "$filler"
   printf '{"type":"assistant","timestamp":"%s","message":{"id":"msg_o1","model":"claude-opus-4-8","content":[{"type":"text","text":"That was a big paste."}],"usage":{"input_tokens":500,"output_tokens":20}}}\n' "$(iso "$T_120S")"
 } > "$SESS_DIR/session-oversized.jsonl"
-touch -d "@$T_120S" "$SESS_DIR/session-oversized.jsonl"
+touch_at "$T_120S" "$SESS_DIR/session-oversized.jsonl"
 
 # ---- session-compacted.jsonl: two summary entries -> CompactionN == 2.
 # mtime 3 days before ref (> IdleSecs=600) resolves status to "idle". --------
@@ -131,7 +140,7 @@ cat > "$SESS_DIR/session-compacted.jsonl" <<EOF
 {"type":"summary","summary":"refactor session part 2"}
 {"type":"assistant","timestamp":"$(iso "$T_3D")","message":{"id":"msg_c2","model":"claude-opus-4-8","content":[{"type":"text","text":"Second compaction done."}],"usage":{"input_tokens":120,"output_tokens":45}}}
 EOF
-touch -d "@$T_3D" "$SESS_DIR/session-compacted.jsonl"
+touch_at "$T_3D" "$SESS_DIR/session-compacted.jsonl"
 
 # ---- session-secret.jsonl: a fake AWS key, the canonical AWS-docs example
 # placeholder (AKIA...EXAMPLE) -- feeds a future `agentdash trail secrets`;
@@ -141,7 +150,7 @@ cat > "$SESS_DIR/session-secret.jsonl" <<EOF
 {"type":"user","timestamp":"$(iso "$T_1H")","message":{"content":"can you check why deploys are failing"}}
 {"type":"assistant","timestamp":"$(iso "$T_1H")","message":{"id":"msg_s1","model":"claude-opus-4-8","content":[{"type":"tool_use","name":"Bash","input":{"command":"echo leaked AWS key AKIAIOSFODNN7EXAMPLE in the old deploy script"}}],"usage":{"input_tokens":90,"output_tokens":30}}}
 EOF
-touch -d "@$T_1H" "$SESS_DIR/session-secret.jsonl"
+touch_at "$T_1H" "$SESS_DIR/session-secret.jsonl"
 
 # ---- agent-*.jsonl: a subagent transcript. board/actions.go's Recap and
 # history.go's isClaudeSubagent both treat this prefix specially. -----------
@@ -150,7 +159,7 @@ cat > "$SESS_DIR/agent-a1b2c3d4.jsonl" <<EOF
 {"type":"user","timestamp":"$(iso "$T_30MIN")","message":{"content":"investigate the flaky integration test"}}
 {"type":"assistant","timestamp":"$(iso "$T_30MIN")","message":{"id":"msg_sa1","model":"claude-haiku-4-5","content":[{"type":"text","text":"Found a race in the queue drain."}],"usage":{"input_tokens":60,"output_tokens":25}}}
 EOF
-touch -d "@$T_30MIN" "$SESS_DIR/agent-a1b2c3d4.jsonl"
+touch_at "$T_30MIN" "$SESS_DIR/agent-a1b2c3d4.jsonl"
 
 # ---- codex rollout: session_meta + turn_context (with approval/sandbox
 # fields, for a future `agentdash trail commands` annotation) + token_count +
@@ -159,9 +168,9 @@ touch -d "@$T_30MIN" "$SESS_DIR/agent-a1b2c3d4.jsonl"
 # filename date components are derived from the rollout's own start time,
 # same convention tests/demo-env.sh uses for its rollout fixture. -----------
 T_ROLL=$(ago $((25 * 60)))
-CODEX_DIR="$DEST/.codex/sessions/$(date -u -d "@$T_ROLL" +%Y/%m/%d)"
+CODEX_DIR="$DEST/.codex/sessions/$(fmt_epoch "$T_ROLL" +%Y/%m/%d)"
 mkdir -p "$CODEX_DIR"
-ROLLOUT="$CODEX_DIR/rollout-$(date -u -d "@$T_ROLL" +%Y-%m-%dT%H-%M-%S)-fixture.jsonl"
+ROLLOUT="$CODEX_DIR/rollout-$(fmt_epoch "$T_ROLL" +%Y-%m-%dT%H-%M-%S)-fixture.jsonl"
 cat > "$ROLLOUT" <<EOF
 {"timestamp":"$(iso "$T_ROLL")","type":"session_meta","payload":{"id":"00000000-0000-0000-0000-0000000000f1","cwd":"$PROJECT","originator":"codex-tui","cli_version":"0.134.0"}}
 {"timestamp":"$(iso $((T_ROLL + 2)))","type":"turn_context","payload":{"model":"gpt-5.5","approval_policy":"on-request","sandbox_policy":"workspace-write"}}
@@ -169,6 +178,6 @@ cat > "$ROLLOUT" <<EOF
 {"timestamp":"$(iso $((T_ROLL + 60)))","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":42000,"cached_input_tokens":20000,"output_tokens":3000},"last_token_usage":{"input_tokens":30000,"cached_input_tokens":18000},"model_context_window":272000}}}
 {"timestamp":"$(iso $((T_ROLL + 65)))","type":"event_msg","payload":{"type":"agent_message","message":"Rate limiting added; tests green."}}
 EOF
-touch -d "@$((T_ROLL + 65))" "$ROLLOUT"
+touch_at "$((T_ROLL + 65))" "$ROLLOUT"
 
 echo "generated fixture HOME at $DEST (seed=$SEED, ref=$REF)"

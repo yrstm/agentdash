@@ -3,10 +3,13 @@
 #   agentdash -w --on-needs-you 'integrations/notify-example.sh'
 #   agentdash -w --on-stuck     'integrations/notify-example.sh'
 #
-# agentdash runs this once per state transition. The agent row arrives as
-# JSON on stdin (same shape as an entry in `agentdash --json`), wrapped in
-# an {event, ts, attached, agent} envelope; the headline fields are also in
-# the environment as AGENTDASH_EVENT / AGENTDASH_PID / AGENTDASH_TASK.
+# agentdash runs this once per state transition (edge-triggered, and
+# debounced per session so the same event will not re-fire for the same agent
+# within 60s). The agent row arrives as JSON on stdin (same shape as an entry
+# in `agentdash --json`), wrapped in an {event, ts, attached, agent} envelope;
+# the headline fields are also in the environment as AGENTDASH_EVENT /
+# AGENTDASH_PID / AGENTDASH_TASK / AGENTDASH_AGENT / AGENTDASH_CWD /
+# AGENTDASH_STATUS.
 #
 # This sample just composes a one-line message and hands it to whatever
 # notifier you have. Replace the `deliver` body with your transport (ntfy,
@@ -27,7 +30,7 @@ else
   event=${AGENTDASH_EVENT:-?}
   pid=${AGENTDASH_PID:-?}
   task=${AGENTDASH_TASK:-"(no task)"}
-  cwd="-"
+  cwd=${AGENTDASH_CWD:--}
   attached="unknown"
 fi
 

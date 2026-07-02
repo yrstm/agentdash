@@ -5,21 +5,9 @@ import (
 	"encoding/binary"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"syscall"
 )
-
-// Login is one interactive session for the logins section.
-type Login struct {
-	User  string
-	TTY   string
-	From  string // remote host from utmp; "" for a local login
-	Idle  string
-	What  string
-	Tmux  string // tmux session this login is attached to, if any
-	Stale bool   // utmp says logged in, but no live process owns the tty
-}
 
 // utmpRecord mirrors struct utmp on linux/amd64 (384 bytes).
 type utmpRecord struct {
@@ -47,43 +35,16 @@ func cstr(b []byte) string {
 	return string(b)
 }
 
-// Logins reads /var/run/utmp directly; when that fails it falls back to
+// rawLogins reads /var/run/utmp directly; when that fails it falls back to
 // `w -h` (documented fallback for distros with odd utmp layouts). The
-// excluded set drops ttys already shown as agent rows.
-func Logins(now int64, exclude map[string]bool) []Login {
+// excluded set drops ttys already shown as agent rows. The shared Logins
+// wrapper adds the tmux tie-in.
+func rawLogins(now int64, exclude map[string]bool) []Login {
 	out := utmpLogins(now, exclude)
 	if out == nil {
 		out = wLogins(exclude)
 	}
-	// Tie each login to the tmux session it is driving, if any. An attached
-	// tmux client is live by definition, so it overrides a stale guess.
-	if len(out) > 0 {
-		clients := ClientsByTTY()
-		out = liveLogins(out, clients)
-	}
 	return out
-}
-
-func liveLogins(in []Login, clients map[string]string) []Login {
-	out := in[:0]
-	for i := range in {
-		if in[i].TTY == "" || in[i].TTY == "?" || in[i].Idle == "?" {
-			continue
-		}
-		if s, ok := clients["/dev/"+in[i].TTY]; ok {
-			in[i].Tmux, in[i].Stale = s, false
-		}
-		if in[i].Stale || staleWhat(in[i].What) {
-			continue
-		}
-		out = append(out, in[i])
-	}
-	return out
-}
-
-func staleWhat(what string) bool {
-	what = strings.TrimSpace(what)
-	return what == "" || what == "."
 }
 
 func utmpLogins(now int64, exclude map[string]bool) []Login {
@@ -185,17 +146,4 @@ func wLogins(exclude map[string]bool) []Login {
 		res = append(res, Login{User: f[0], TTY: f[1], From: f[2], Idle: f[4], What: what})
 	}
 	return res
-}
-
-func agoCompact(sec int64) string {
-	switch {
-	case sec < 60:
-		return strconv.FormatInt(sec, 10) + "s"
-	case sec < 3600:
-		return strconv.FormatInt(sec/60, 10) + "m"
-	case sec < 86400:
-		return strconv.FormatInt(sec/3600, 10) + "h"
-	default:
-		return strconv.FormatInt(sec/86400, 10) + "d"
-	}
 }

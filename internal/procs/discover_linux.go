@@ -1,8 +1,9 @@
-// Package procs reads agent processes and system state straight from the
-// kernel interfaces (/proc, /proc/net, utmp, the docker unix socket),
-// replacing the procps/iproute2 forks of the v1 script. tmux remains an
-// exec boundary: it has no stable public API.
 package procs
+
+// discover_linux.go reads processes and system state straight from the Linux
+// kernel interfaces (/proc, /proc/stat, /proc/loadavg). The OS-independent
+// types and heuristics it works with live in procs.go; the macOS counterparts
+// live in discover_darwin.go.
 
 import (
 	"os"
@@ -23,62 +24,6 @@ func Root() string {
 // userHz is the kernel's USER_HZ for /proc time fields, fixed at 100 on
 // Linux regardless of the scheduler tick.
 const userHz = 100
-
-// Proc is one process of interest on the board.
-type Proc struct {
-	PID    int
-	PPID   int
-	Kind   string // claude / codex / hermes; "" for non-agents
-	TTY    string // pts/1 style, "?" when none
-	State  string
-	Start  int64 // epoch seconds
-	Uptime int64 // seconds, relative to now passed to Discover
-	Cwd    string
-	Args   string // full command line, NULs as spaces
-
-	// Extra holds optional per-kind routing metadata populated by build-tagged
-	// extensions (e.g. session-store env vars). Nil in the default build.
-	Extra map[string]string
-}
-
-// extraRuntime is an extension point for optional, build-tagged agent adapters
-// to enrich a Proc from /proc/<pid> data (e.g. session-store env vars). Empty
-// in the default build, so process reading behaves exactly as the core always
-// has.
-var extraRuntime []func(args, dir string, p *Proc)
-
-// RegisterRuntime adds a hook that may enrich a Proc from /proc/<pid> data.
-func RegisterRuntime(f func(args, dir string, p *Proc)) { extraRuntime = append(extraRuntime, f) }
-
-// WrapperKinds are agents with no session files of their own: listed,
-// not enriched.
-var WrapperKinds = map[string]bool{"hermes": true}
-
-// KindOf maps a command line to an agent kind; first match wins, specific
-// names before generic ones.
-func KindOf(args string) string {
-	switch {
-	case strings.Contains(args, "hermes"):
-		return "hermes"
-	case strings.Contains(args, "claude"):
-		return "claude"
-	case strings.Contains(args, "codex"):
-		return "codex"
-	}
-	return ""
-}
-
-// excluded mirrors the v1 pgrep|grep -v pipeline: helper processes that
-// mention an agent's name without being one.
-func excluded(args string) bool {
-	for _, pat := range []string{"pgrep", "hermes-snap", "shell-snapshot",
-		"node --ping", "sandboxes/", "/bin/bash -c", "codex-linux-sandbox"} {
-		if strings.Contains(args, pat) {
-			return true
-		}
-	}
-	return strings.HasPrefix(args, "tmux ") || args == "tmux"
-}
 
 type statLine struct {
 	comm      string
@@ -211,20 +156,55 @@ func Discover(now int64) []Proc {
 	return dropSameKindLaunchers(out)
 }
 
-// dropSameKindLaunchers removes a process whose child is another agent of the
-// same kind — the wrapper that re-execs the real one (e.g. `node /usr/bin/codex`
-// spawning the vendored codex binary), so one chat is one row, not two.
-func dropSameKindLaunchers(ps []Proc) []Proc {
-	childKind := make(map[int]string, len(ps))
-	for _, p := range ps {
-		childKind[p.PPID] = p.Kind
+// Alive reports whether a pid is still a live process. On Linux this is the
+// presence of its /proc entry (honouring AGENTDASH_PROC_ROOT so fixtures work).
+func Alive(pid string) bool {
+	_, err := os.Stat(filepath.Join(Root(), pid))
+	return err == nil
+}
+
+// openFDs returns the target paths of a process's open file descriptors, the
+// per-OS primitive behind the exact-evidence session pairing in pair.go. On
+// Linux it reads the /proc/<pid>/fd symlinks; a gone or unreadable pid yields
+// nil (fail soft).
+func openFDs(pid int) []string {
+	dir := filepath.Join(Root(), strconv.Itoa(pid), "fd")
+	des, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
 	}
-	out := make([]Proc, 0, len(ps))
-	for _, p := range ps {
-		if childKind[p.PID] == p.Kind {
-			continue // p is the launcher of a same-kind child; keep the child
+	out := make([]string, 0, len(des))
+	for _, de := range des {
+		t, err := os.Readlink(filepath.Join(dir, de.Name()))
+		if err != nil {
+			continue
 		}
-		out = append(out, p)
+		out = append(out, t)
+	}
+	return out
+}
+
+// AllProcs returns a minimal record for every live process (pid, ppid, args),
+// for whole-system sweeps that don't need Proc enrichment.
+func AllProcs() []LiteProc {
+	root := Root()
+	var out []LiteProc
+	for _, pid := range listPIDs(root) {
+		dir := filepath.Join(root, strconv.Itoa(pid))
+		cl, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+		if err != nil || len(cl) == 0 {
+			continue
+		}
+		args := strings.TrimRight(strings.ReplaceAll(string(cl), "\x00", " "), " ")
+		sb, err := os.ReadFile(filepath.Join(dir, "stat"))
+		if err != nil {
+			continue
+		}
+		st, ok := parseStat(sb)
+		if !ok {
+			continue
+		}
+		out = append(out, LiteProc{PID: pid, PPID: st.ppid, Args: args})
 	}
 	return out
 }
