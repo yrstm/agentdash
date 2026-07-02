@@ -21,6 +21,12 @@ func TestCollectClaudeAndCodex(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(work, ".git"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Collect resolves a session's cwd through symlinks (normalizePath); on
+	// macOS the temp dir lives under /var, a symlink to /private/var, so resolve
+	// the expected path the same way to keep the assertions platform-agnostic.
+	if w, err := filepath.EvalSymlinks(work); err == nil {
+		work = w
+	}
 	claudePath := filepath.Join(claudeDir, "s1.jsonl")
 	claude := strings.Join([]string{
 		`{"type":"mode","sessionId":"s1"}`,
