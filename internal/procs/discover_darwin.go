@@ -53,6 +53,16 @@ func Discover(now int64) []Proc {
 	return out
 }
 
+// AllProcs returns a minimal record for every live process (pid, ppid, args).
+func AllProcs() []LiteProc {
+	rows := psTable()
+	out := make([]LiteProc, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, LiteProc{PID: p.pid, PPID: p.ppid, Args: p.command})
+	}
+	return out
+}
+
 // ParentMap returns pid -> ppid for every live process.
 func ParentMap() map[int]int {
 	out := map[int]int{}

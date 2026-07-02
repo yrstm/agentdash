@@ -184,6 +184,31 @@ func openFDs(pid int) []string {
 	return out
 }
 
+// AllProcs returns a minimal record for every live process (pid, ppid, args),
+// for whole-system sweeps that don't need Proc enrichment.
+func AllProcs() []LiteProc {
+	root := Root()
+	var out []LiteProc
+	for _, pid := range listPIDs(root) {
+		dir := filepath.Join(root, strconv.Itoa(pid))
+		cl, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+		if err != nil || len(cl) == 0 {
+			continue
+		}
+		args := strings.TrimRight(strings.ReplaceAll(string(cl), "\x00", " "), " ")
+		sb, err := os.ReadFile(filepath.Join(dir, "stat"))
+		if err != nil {
+			continue
+		}
+		st, ok := parseStat(sb)
+		if !ok {
+			continue
+		}
+		out = append(out, LiteProc{PID: pid, PPID: st.ppid, Args: args})
+	}
+	return out
+}
+
 // ParentMap returns pid -> ppid for every live process (tree view, port
 // descendant expansion).
 func ParentMap() map[int]int {

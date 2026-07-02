@@ -23,6 +23,7 @@ import (
 	"github.com/yrstm/agentdash/internal/du"
 	"github.com/yrstm/agentdash/internal/eventlog"
 	"github.com/yrstm/agentdash/internal/grep"
+	"github.com/yrstm/agentdash/internal/health"
 	"github.com/yrstm/agentdash/internal/jsonout"
 	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
@@ -144,6 +145,9 @@ usage: agentdash [flags | subcommand]
                      per model, 30m burn rate, per-session attribution, cache
                      stats. Estimate only — never provider-reported. --limit N
                      sets a 5h cap so it can project when the window fills
+  health [--json]    per-agent roll-up of warning signals (stuck/respawn, ctx
+                     high, frequent compaction, API errors, interrupts, waiting
+                     time, zombie MCP procs). Exit 0 if nothing is flagged
   --help | --version
 
 config (~/.config/agentdash/context-windows.conf):
@@ -189,6 +193,9 @@ func main() {
 			return
 		case "usage":
 			runUsage(args[1:])
+			return
+		case "health":
+			runHealth(args[1:])
 			return
 		}
 	}
@@ -633,6 +640,62 @@ func runAudit(rest []string) {
 		return
 	}
 	fmt.Print(render.DriftFindings(findings, proj, theme))
+}
+
+// runHealth drives the `agentdash health` subcommand: a per-agent roll-up of
+// warning signals. Like --any-waiting it composes with cron — it exits 0 when
+// nothing is flagged and 1 when something is, so `agentdash health || notify`
+// works. --json always exits 0 (the caller reads `flagged`).
+func runHealth(rest []string) {
+	jsonMode := false
+	for _, a := range rest {
+		if a == "--json" {
+			jsonMode = true
+		}
+	}
+	home, _ := os.UserHomeDir()
+	rep := health.Collect(health.Options{Home: home, Now: time.Now().Unix()})
+	if jsonMode {
+		out, err := health.JSON(rep)
+		emitJSON(out, err)
+		return
+	}
+	theme := render.NewTheme(!term.IsTerminal(int(os.Stdout.Fd())))
+	printHealth(rep, theme)
+	if rep.Flagged {
+		os.Exit(1)
+	}
+}
+
+func printHealth(rep health.Report, t render.Theme) {
+	if len(rep.Agents) == 0 && len(rep.ZombieMCP) == 0 {
+		fmt.Println("  no live agents")
+		return
+	}
+	for _, a := range rep.Agents {
+		head := t.G + "ok" + t.N
+		if a.Flagged {
+			head = t.Y + "flag" + t.N
+		}
+		task := parse.Clean(a.Task, 48)
+		fmt.Printf("  [%s] %s %spid %d%s  %s%s%s\n", head, a.Kind, t.D, a.PID, t.N, t.B, task, t.N)
+		for _, s := range a.Signals {
+			mark, c := "·", t.D
+			if s.Flag {
+				mark, c = "⚠", t.Y
+			}
+			fmt.Printf("        %s%s %-14s%s %s%s%s\n", c, mark, s.Name, t.N, t.D, s.Detail, t.N)
+		}
+	}
+	if len(rep.ZombieMCP) > 0 {
+		fmt.Printf("\n  %s⚠ zombie MCP servers%s (launching agent gone, still running):\n", t.Y, t.N)
+		for _, z := range rep.ZombieMCP {
+			fmt.Printf("        %s%s%s\n", t.D, z, t.N)
+		}
+	}
+	if !rep.Flagged {
+		fmt.Printf("\n  %sall clear%s\n", t.G, t.N)
+	}
 }
 
 // runUsage drives the `agentdash usage` subcommand: a local, credential-free

@@ -102,6 +102,7 @@ agentdash memory [repo|.]  agent-memory drift and change history (--json for too
 agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
 agentdash du               disk triage: agent file sizes by category (--json for tooling)
 agentdash usage            local token-spend estimate: windows, burn, attribution
+agentdash health           per-agent warning roll-up; exit 0 if nothing flagged
 ```
 
 ### Search past sessions (`agentdash grep`)
@@ -182,6 +183,40 @@ the current burn rate; without one it stays silent about limits it cannot know.
 Usage blocks are deduplicated by message id. Codex reports cumulative counts,
 so its per-turn delta (`last_token_usage`) is what lands in the windows; Codex
 does not split cache read from creation, so the cache-hit stats are Claude-only.
+
+### Health roll-up (`agentdash health`)
+
+`agentdash health` prints one block per live agent with a small set of
+pass/flag signals, each carrying the evidence behind it. Like `--any-waiting`
+it composes with cron: it exits 0 when nothing is flagged and 1 when something
+is, so `agentdash health || notify-me` works. `--json` always exits 0 (read
+the `flagged` field).
+
+```
+agentdash health
+agentdash health || echo "something needs attention"
+agentdash health --json
+```
+
+The signals, and how each is derived:
+
+- **stuck / respawn** — the board's own status for the row (`stuck?`, or
+  `respawn ×N` for a crash loop).
+- **ctx_high** — the session's context tokens are ≥85% of the model's window
+  (`AGENTDASH_*` status thresholds and the context-window config feed this).
+- **compaction** — context-compaction (summary) entries per hour over the
+  session's lifetime; a high rate means the agent keeps summarizing its memory
+  away. Flagged at ≥2/hour.
+- **api_errors / interrupts** — share of the last 30 turns that are API-error
+  turns (`isApiErrorMessage`) or user interrupts (`[Request interrupted …]`),
+  flagged at ≥20%. Claude transcripts only — Codex has no equivalent marker.
+- **waiting_today** — minutes the session has spent in `waiting` since local
+  midnight, reconstructed from the event log's status history (so it needs the
+  event log enabled; it reads 0 otherwise). Flagged at ≥30 minutes.
+- **zombie MCP** (box-level) — MCP server processes reparented to init (their
+  launching agent exited but the server kept running). Conservative: it keys on
+  unmistakable MCP markers in the command line, so a server still owned by a
+  live agent is never flagged.
 
 ### Memory drift (`agentdash memory`)
 

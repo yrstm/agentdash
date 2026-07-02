@@ -42,6 +42,14 @@ var extraRuntime []func(args, dir string, p *Proc)
 // RegisterRuntime adds a hook that may enrich a Proc from per-process data.
 func RegisterRuntime(f func(args, dir string, p *Proc)) { extraRuntime = append(extraRuntime, f) }
 
+// LiteProc is a minimal process record for whole-system scans that don't need
+// the full Proc enrichment (e.g. the health check's zombie-MCP sweep).
+type LiteProc struct {
+	PID  int
+	PPID int
+	Args string
+}
+
 // WrapperKinds are agents with no session files of their own: listed,
 // not enriched.
 var WrapperKinds = map[string]bool{"hermes": true}
