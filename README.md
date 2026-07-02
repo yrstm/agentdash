@@ -98,6 +98,7 @@ agentdash why <row|pid>    where every value on the row came from
 agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
+agentdash docs [repo|. | <file>]  agent-memory health, or one file's change history
 agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
 agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
 agentdash du               disk triage: agent file sizes by category (--json for tooling)

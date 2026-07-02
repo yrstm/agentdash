@@ -23,6 +23,7 @@ import (
 	"github.com/yrstm/agentdash/internal/drift"
 	"github.com/yrstm/agentdash/internal/du"
 	"github.com/yrstm/agentdash/internal/eventlog"
+	"github.com/yrstm/agentdash/internal/filehist"
 	"github.com/yrstm/agentdash/internal/grep"
 	"github.com/yrstm/agentdash/internal/health"
 	"github.com/yrstm/agentdash/internal/jsonout"
@@ -120,10 +121,12 @@ usage: agentdash [flags | subcommand]
   label <row|pid> <text>   set a persistent TASK label ("" clears)
   resume <row|pid>   print the ` + "`claude --resume`" + ` command (with cwd)
   recap [4h|30m|2d]  what changed since you last looked (default: last recap)
-  docs [repo|.] [--json]
+  docs [repo|. | <file>] [--json]
                      CLAUDE.md/AGENTS.md health: no arg = cross-project board;
-                     a repo = its memory file change log (local, sampled;
-                     --json emits schema_version 1 for tooling)
+                     a repo = its memory file change log; a file = that file's
+                     change history (git-log timeline when tracked, agentdash
+                     snapshots when not) with each change attributed to the
+                     agent session that made it. --json for tooling
   inspect [--global] [--tree] [why <file>] [--json]
                      inventory all config files shaping agent behaviour:
                      CLAUDE.md, AGENTS.md, .cursor/rules, hooks, slash commands
@@ -365,6 +368,21 @@ func runDocs(rest []string) {
 	logPath := memory.LogPath()
 	live := board.MemoryProjects(now.Unix())
 
+	// A <file> argument switches to that file's change history (git-log timeline
+	// for tracked files, agentdash's snapshots for untracked), with each change
+	// attributed to the agent session that made it.
+	if st, err := os.Stat(repoArg); repoArg != "" && err == nil && st.Mode().IsRegular() {
+		home, _ := os.UserHomeDir()
+		lg := filehist.History(repoArg, home, now.Unix())
+		if jsonMode {
+			out, err := filehist.JSON(lg)
+			emitJSON(out, err)
+			return
+		}
+		printFileHistory(lg, theme)
+		return
+	}
+
 	if repoArg != "" {
 		proj := resolveProject(repoArg)
 		memory.Sample(logPath, map[string]int{proj: live[proj]}, now)
@@ -389,6 +407,36 @@ func runDocs(rest []string) {
 		return
 	}
 	fmt.Print(render.MemoryBoard(rows, theme))
+}
+
+// printFileHistory renders a single file's change timeline (A10), newest last.
+func printFileHistory(lg filehist.Log, t render.Theme) {
+	src := "untracked — agentdash snapshots"
+	if lg.Tracked {
+		src = "git-tracked"
+	}
+	fmt.Printf("%sHISTORY%s: %s%s%s (%s)\n", t.B, t.N, t.D, shortenHomeAbs(lg.Path), t.N, src)
+	if len(lg.Changes) == 0 {
+		fmt.Printf("  %sno recorded changes%s\n", t.D, t.N)
+		return
+	}
+	for _, c := range lg.Changes {
+		when := time.Unix(c.TS, 0).UTC().Format("2006-01-02 15:04")
+		if c.Source == "git" {
+			fmt.Printf("\n  %s%s%s %s%s%s  %s+%d/-%d%s  %s%s%s\n",
+				t.B, when, t.N, t.Y, c.Rev, t.N, t.G, c.Added, c.Removed, t.N, t.D, c.Author, t.N)
+		} else {
+			fmt.Printf("\n  %s%s%s  %s%d bytes · %s · %s%s\n",
+				t.B, when, t.N, t.D, c.Bytes, c.SHA, c.Excerpt, t.N)
+		}
+		fmt.Printf("    %s%s%s\n", t.D, c.Attribution, t.N)
+		if c.Source == "git" && c.Excerpt != "" {
+			for _, ln := range strings.Split(c.Excerpt, "\n") {
+				fmt.Printf("    %s%s%s\n", t.D, ln, t.N)
+			}
+		}
+	}
+	fmt.Printf("\n  %sgit-tracked files show git history; untracked files show agentdash's hash/size snapshots (content not stored)%s\n", t.D, t.N)
 }
 
 func emitJSON(out []byte, err error) {
