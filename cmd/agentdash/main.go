@@ -39,7 +39,7 @@ import (
 // version is the source default; a release build overrides it with a bare
 // semver via ldflags (goreleaser). The "-dev" suffix marks the source default,
 // so resolveVersion knows to fall back to the embedded build metadata.
-var version = "2.4.0-dev"
+var version = "0.2.4-dev"
 
 // pseudoTSRe pulls the 14-digit UTC timestamp and 12-char hash out of a module
 // pseudo-version (e.g. v0.0.0-20260619123456-abcdef012345), the form that
