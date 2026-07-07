@@ -4,8 +4,13 @@ go 1.25.0
 
 // v1.0.0 was the pre-rewrite (bash) line, tagged by mistake; its proxy
 // snapshot carries stale errors and must not be used. Retracted so tooling
-// (go install @latest, go list) skips it.
-retract v1.0.0
+// (go install @latest, go list) skips it. v1.0.1 is a retraction-only shim:
+// it must outrank v1.0.0 for the go tool to read this block, so it retracts
+// itself too, leaving v0.2.4 as the resolved @latest.
+retract (
+	v1.0.0
+	v1.0.1
+)
 
 require (
 	github.com/mattn/go-runewidth v0.0.24

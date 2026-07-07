@@ -3,7 +3,7 @@
 name: release
 on:
   push:
-    tags: ["v*"]
+    tags: ["v0.*"]  # 0.x line only; a v1.x tag is a retraction shim, not a release
 
 permissions:
   contents: write
