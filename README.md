@@ -10,18 +10,19 @@
 # agentdash
 
 `w`, but for coding agents. agentdash prints a table of the agent
-processes on a Linux box: what each one is working on, what model it is
-on, how full its context is, and whether it is blocked waiting on you.
-`-w` turns the table into a small interactive TUI.
+processes on a Linux or macOS box: what each one is working on, what
+model it is on, how full its context is, and whether it is blocked
+waiting on you. `-w` turns the table into a small interactive TUI.
 
 It is a single static binary (no cgo, no runtime services), reading
 the session files agent CLIs already write locally (Claude Code and
 Codex are supported; adding another agent is a small parser, see
-CONTRIBUTING.md) and /proc directly. No daemon, no server, no API
-calls, no telemetry, no file watcher, and it never launches or manages
-sessions. Watch mode samples foreground state on the TUI refresh tick,
-like `w` or `htop`. I wrote it because I kept losing track of agents
-across tmux sessions; maybe it is useful to you too. Linux only.
+CONTRIBUTING.md) and the OS process table directly — `/proc` on Linux,
+`ps`/`lsof` on macOS. No daemon, no server, no API calls, no telemetry,
+no file watcher, and it never launches or manages sessions. Watch mode
+samples foreground state on the TUI refresh tick, like `w` or `htop`. I
+wrote it because I kept losing track of agents across tmux sessions;
+maybe it is useful to you too. Runs on Linux and macOS.
 
 ## Install
 
@@ -29,14 +30,15 @@ across tmux sessions; maybe it is useful to you too. Linux only.
 curl -fsSL https://raw.githubusercontent.com/yrstm/agentdash/main/install.sh | sh
 ```
 
-or grab the binary directly:
+or grab the binary directly (`linux-amd64`, `linux-arm64`,
+`darwin-amd64`, `darwin-arm64`):
 
 ```sh
 curl -fsSLo ~/.local/bin/agentdash https://github.com/yrstm/agentdash/releases/latest/download/agentdash-linux-amd64
 chmod +x ~/.local/bin/agentdash
 ```
 
-or with Homebrew (this also works on Linux), or go install:
+or with Homebrew (Linux and macOS), or go install:
 
 ```sh
 brew install yrstm/agentdash/agentdash
@@ -46,7 +48,11 @@ go install github.com/yrstm/agentdash/cmd/agentdash@latest
 It is a single static binary with no cgo and no runtime services.
 Optional at runtime: tmux (pane jumping, attachment glyphs), docker
 (sandbox section, skipped if absent), jq (only for the integrations).
-The auditable v1 bash version lives in `legacy/` and keeps working.
+On macOS, `lsof` (shipped with the OS) is used to read process working
+directories, open session files, and listening ports — the roles
+`/proc` fills on Linux; the ports and sandbox sections degrade
+gracefully if it is unavailable. The auditable v1 bash version lives in
+`legacy/` and keeps working (Linux only).
 
 Dependency footprint (measured with `go list -buildvcs=false`; absolute package
 counts vary a little by Go toolchain): the default build is **~201 compiled
@@ -92,10 +98,186 @@ agentdash why <row|pid>    where every value on the row came from
 agentdash label <row|pid> "text"   pin a task label
 agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
-agentdash memory [repo|.]  agent-memory drift and change history (--json for tooling)
+agentdash docs [repo|. | <file>]  agent-memory health, drift, and per-file change history (--json)
+agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
+agentdash du               disk triage: agent file sizes by category (--json for tooling)
+agentdash usage            local token-spend estimate: windows, burn, attribution
+agentdash health           per-agent warning roll-up; exit 0 if nothing flagged
+agentdash inspect          inventory config files (token cost, mtime, git-tracked)
+agentdash audit            config + context-rot findings (--handoff for a fix pack)
+agentdash context <row|pid>  the effective instruction stack for a live session
+agentdash trail <commands|files|secrets>  forensics from transcripts (--json/--csv)
 ```
 
-### Memory drift (`agentdash memory`)
+### Trust trail (`agentdash trail`)
+
+`agentdash trail` reconstructs, from transcripts only, what agents actually did
+on this box — read-only, and it never prints a secret in full.
+
+```
+agentdash trail commands --since 7d
+agentdash trail files --blast <session-file>
+agentdash trail secrets --json
+```
+
+- `trail commands` — every shell command an agent ran (timestamp, session, cwd,
+  command line). Codex rollouts also record per-turn approval and sandbox
+  policy, so commands that ran with **approvals off** (`approval_policy=never`)
+  or the **sandbox disabled** (`danger-full-access`) are flagged, and the count
+  of them is the headline number.
+- `trail files` — every Edit/Write (and codex `apply_patch`): timestamp,
+  session, path. `--blast <session>` shows the file set one session touched and
+  marks which of those files currently differ in `git status`.
+- `trail secrets` — scans transcripts for high-confidence secret patterns (AWS
+  keys, GitHub/Slack/OpenAI/Anthropic tokens, Google API keys, private-key
+  headers, JWTs). It reports a **masked** value (first 4 chars + `…`), the
+  pattern name, the session file, and the age — the full value is never printed
+  or written anywhere. It offers no scrubber: rotate the credential, then trim
+  history and delete the session file.
+
+All three take `--since` and `--project`, and export `--json` and `--csv`.
+
+### Config inventory & context rot (`inspect`, `audit`, `context`)
+
+`agentdash inspect` inventories every file that shapes agent behaviour for the
+current project — the CLAUDE.md / AGENTS.md chain, `.cursor/rules`, hooks, and
+slash commands — with an estimated token cost (`~chars/4`), last-modified
+date, and whether each file is git-tracked, and a footer with the total
+always-loaded instruction tokens. `inspect why <file>` explains why a file
+applies.
+
+`agentdash audit` reports deterministic, evidence-backed findings — no model
+calls. Alongside the original drift checks (`missing_rule`, `stale_rule`) it
+now flags **conflicting rules** across files (same topic, opposite values —
+indentation, package manager, test runner), **duplicate rules**, **dead hooks**
+(a settings hook pointing at a missing or non-executable script), and a
+**heavy context** (the always-loaded chain over a token budget; default 4k,
+`AGENTDASH_LINT_CTX_TOKENS` overrides). Each finding has a severity, evidence
+lines, and a suggested fix. It **never edits files**; `--handoff <file>` writes
+an evidence pack plus a ready prompt you can feed to your own agent to apply the
+fixes — that file is the only LLM boundary, and agentdash calls nothing.
+
+`agentdash context <row|pid>` shows the effective instruction stack for a live
+session: the memory-file chain for its cwd, active hooks, and configured MCP
+servers, each with an estimated token cost; the model's window and current
+CTX% (exact, from usage); and the session's compaction events with timestamps.
+The MCP tool-schema "context tax" is reported as not measurable from
+transcripts rather than guessed.
+
+### Search past sessions (`agentdash grep`)
+
+Find the old conversation where something was already worked out. `agentdash
+grep <pattern>` searches the message text of every Claude and Codex transcript
+and prints one line per matching session, newest first:
+
+```
+agentdash grep "flaky checkout"
+agentdash grep "rate limit" --role assistant --project api --since 7d -n 20
+agentdash grep "AKIA" --tools --json
+```
+
+`<pattern>` is a Go regular expression (RE2). Each hit shows the session age,
+agent kind, project directory, a `N×` match count, the session title, the
+best matching snippet, and a paste-ready `resume` command. Flags:
+
+- `--role user|assistant` — search only that side of the conversation.
+- `--project <dir>` — keep sessions whose cwd or repo root contains `<dir>`.
+- `--since 30m|4h|7d` — skip sessions with no activity in the window.
+- `-n <max>` — stop after this many matching sessions (newest first), so a
+  broad pattern on a large history returns quickly.
+- `--tools` — also search tool-call payloads (Bash commands, tool results),
+  not just message text.
+- `--json` — schema_version 1 document for tooling.
+
+By default only human/assistant **message text** is searched; tool payloads
+(and any secrets pasted into them) are searched only with `--tools`. Subagent
+transcripts fold under their parent session rather than showing as their own
+hit.
+
+### Disk triage (`agentdash du`)
+
+`agentdash du` breaks down the disk the agent CLIs accumulate, largest
+category first, and for the transcript store lists the ten biggest sessions:
+
+```
+agentdash du
+agentdash du --json
+```
+
+Each category shows its size, one sentence on what it is and whether deleting
+it is safe, the relevant retention knob where one exists (e.g. Claude Code's
+`cleanupPeriodDays`), and a suggested cleanup command. Categories covered:
+`~/.claude/projects`, `~/.claude/file-history`, `~/.claude/shell-snapshots`,
+`~/.claude/todos`, `~/.claude.json`, `~/.codex/sessions`, `~/.codex/log`, and
+the MCP log cache (`~/.cache/claude-cli-nodejs` on Linux,
+`~/Library/Caches/claude-cli-nodejs` on macOS); on macOS it also accounts for
+the desktop app's `~/Library/Application Support/Claude` and
+`~/Library/Logs/Claude`. **`du` never deletes anything** — the cleanup lines
+are suggestions for you to run.
+
+### Usage estimates (`agentdash usage`)
+
+`agentdash usage` estimates token spend from the per-message usage blocks the
+transcripts already record. It reads no credentials and makes no API call, so
+**everything it prints is a local estimate** — it cannot see provider-side
+limits, spend on other machines, or anything the transcripts do not record,
+and it says so in its header.
+
+```
+agentdash usage
+agentdash usage --limit 20000000
+agentdash usage --json
+```
+
+It reports, per model, rolling **5-hour** and **7-day** token totals (input
+counts include cache tokens, matching the board); a **burn rate** in
+tokens/min over the last 30 minutes; a **per-session attribution** table for
+the 5h window (share %, agent, model, in/out, task — subagent transcripts are
+tagged); and a **per-project cache-hit ratio** over 7 days, flagging a project
+whose ratio dropped sharply in the last day (usually an always-loaded file
+changed and stopped hitting cache). With `--limit N` (or
+`AGENTDASH_USAGE_LIMIT`) it projects when the 5h window would reach that cap at
+the current burn rate; without one it stays silent about limits it cannot know.
+
+Usage blocks are deduplicated by message id. Codex reports cumulative counts,
+so its per-turn delta (`last_token_usage`) is what lands in the windows; Codex
+does not split cache read from creation, so the cache-hit stats are Claude-only.
+
+### Health roll-up (`agentdash health`)
+
+`agentdash health` prints one block per live agent with a small set of
+pass/flag signals, each carrying the evidence behind it. Like `--any-waiting`
+it composes with cron: it exits 0 when nothing is flagged and 1 when something
+is, so `agentdash health || notify-me` works. `--json` always exits 0 (read
+the `flagged` field).
+
+```
+agentdash health
+agentdash health || echo "something needs attention"
+agentdash health --json
+```
+
+The signals, and how each is derived:
+
+- **stuck / respawn** — the board's own status for the row (`stuck?`, or
+  `respawn ×N` for a crash loop).
+- **ctx_high** — the session's context tokens are ≥85% of the model's window
+  (`AGENTDASH_*` status thresholds and the context-window config feed this).
+- **compaction** — context-compaction (summary) entries per hour over the
+  session's lifetime; a high rate means the agent keeps summarizing its memory
+  away. Flagged at ≥2/hour.
+- **api_errors / interrupts** — share of the last 30 turns that are API-error
+  turns (`isApiErrorMessage`) or user interrupts (`[Request interrupted …]`),
+  flagged at ≥20%. Claude transcripts only — Codex has no equivalent marker.
+- **waiting_today** — minutes the session has spent in `waiting` since local
+  midnight, reconstructed from the event log's status history (so it needs the
+  event log enabled; it reads 0 otherwise). Flagged at ≥30 minutes.
+- **zombie MCP** (box-level) — MCP server processes reparented to init (their
+  launching agent exited but the server kept running). Conservative: it keys on
+  unmistakable MCP markers in the command line, so a server still owned by a
+  live agent is never flagged.
+
+### Memory health & file history (`agentdash docs`)
 
 In plain terms: agentdash quietly watches the memory files your agents rely on
 (`CLAUDE.md`, `AGENTS.md`) and tells you when a project's memory has gone stale
@@ -109,15 +291,25 @@ hashing, so steady-state cost is tiny) and appends to an append-only,
 never-pruned log at `~/.cache/agentdash/memory-log.jsonl` — but only when the
 content hash actually changes, so a same-size edit is still recorded.
 
-`agentdash memory` shows a cross-project board ranked by how far each
+`agentdash docs` shows a cross-project board ranked by how far each
 project's memory trails its recent work (git commit time and dirty-tree state
 when available, else file mtime), flags `stale` and — when a memory change
 landed while two or more live sessions shared the project — `⚠concurrent`
-(a mechanical risk signal, not proven authorship). `agentdash memory <repo|.>`
+(a mechanical risk signal, not proven authorship). `agentdash docs <repo|.>`
 prints that project's change log, newest last, each entry labelled
 `baseline` (the first time agentdash observed the file — it did not create it),
 `grew`, `shrunk`, or `same-size-rewrite`. `--json` emits the same data as a
 stable `schema_version: 1` document (cross-project board, or per-project log).
+
+Given a **file** instead of a repo, `agentdash docs <file>` prints that one
+file's change history: a `git log --follow` timeline (when, author, +/- lines,
+first diff hunk) when the file is tracked, or agentdash's own hash/size
+snapshots when it is not. Each change is attributed by correlating its time
+against Edit/Write tool calls in the transcripts — `by <agent> session <task>
+at <t>` when a matching edit is within five minutes, otherwise `outside any
+recorded agent session (human or other tool)`. This `--json` document is
+`schema_version: 2` (the command's one additive bump; the board and per-project
+log documents are unchanged at 1).
 
 **Exactly what it samples.** Repo-root `CLAUDE.md` and `AGENTS.md` only — no
 recursive crawl, no other markdown, no subdirectories. It reads each file only
@@ -134,7 +326,7 @@ live-`sessions` count at sample time — metadata and a hash, nothing more.
 It is **never pruned** — that is the point (long-term history) — so it grows by
 one line per real content change. It records no file contents, but project paths
 and names can themselves be sensitive; the file stays local and is yours to
-delete. (A future `agentdash memory compact` / `--forget <repo>` could trim it;
+delete. (A future `agentdash docs compact` / `--forget <repo>` could trim it;
 not built yet.)
 
 Local only, no network, read-only toward your files; the scope is deliberately
@@ -205,15 +397,22 @@ wrapped in an envelope:
 `attached` is whether someone is on its tmux pane (so a notifier can stay
 quiet for agents you are already watching). For quick shell one-liners the
 headline fields are also in the environment: `AGENTDASH_EVENT`,
-`AGENTDASH_PID`, `AGENTDASH_TASK`. A `stuck?` transition counts as
-needs-you too, so with both hooks set it fires both events; deduplicate on
-`event` if that matters. Commands run non-blocking and are bounded by a
-10s timeout, so a slow or wedged hook never stalls the board.
+`AGENTDASH_PID`, `AGENTDASH_TASK`, `AGENTDASH_AGENT`, `AGENTDASH_CWD`, and
+`AGENTDASH_STATUS`. A `stuck?` transition counts as needs-you too, so with
+both hooks set it fires both events; deduplicate on `event` if that matters.
+Hooks are edge-triggered (they fire on entry into a state, not while it
+persists) and debounced per session: the same event will not re-fire for the
+same agent within 60s, so a status that flickers does not spam you. Commands
+run non-blocking and are bounded by a 10s timeout, so a slow or wedged hook
+never stalls the board.
 
-A minimal example notifier lives in `integrations/notify-example.sh`:
+A minimal example notifier lives in `integrations/notify-example.sh`, or use
+your desktop/phone notifier directly:
 
 ```sh
 agentdash -w --on-needs-you 'integrations/notify-example.sh'
+agentdash -w --on-needs-you 'notify-send "agent $AGENTDASH_AGENT" "$AGENTDASH_STATUS: $AGENTDASH_TASK"'
+agentdash -w --on-needs-you 'curl -fsS -d "$AGENTDASH_STATUS: $AGENTDASH_TASK" https://ntfy.sh/your-topic'
 ```
 
 To let another agent read and triage the fleet through the same CLI (no
@@ -335,8 +534,17 @@ project directory no agent or tmux pane is using.
 ## Privacy
 
 The TASK column shows prompt text and the cache at
-`~/.cache/agentdash/usage.json` persists it (mode 0600). Mind
-screen-sharing and log shipping.
+`~/.cache/agentdash/usage.json` persists it (mode 0600). `agentdash grep`
+reads the prompt and reply text of your transcripts to search them; it prints
+matching snippets to your terminal (and `--tools` widens the search to tool
+payloads, which may include pasted secrets). `agentdash usage` reads prompt
+text too — it shows each session's task in the attribution table — but reports
+only token counts, never credentials, and makes no network call. Nothing
+leaves the machine and no new file is written by `grep` or `usage`.
+`agentdash trail` also reads transcript text (commands, file paths, and — for
+the secrets scan — the conversation body); `trail secrets` masks every match to
+its first 4 characters and never prints or persists the full value, and no
+`trail` subcommand writes a file. Mind screen-sharing and log shipping.
 
 ## License
 

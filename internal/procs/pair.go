@@ -52,18 +52,10 @@ func claudePathsFor(home, cwd string) []string {
 
 // fdSession is evidence tier 1: the process holds a session jsonl open
 // under its project dir. Exact when it hits, but claude does not normally
-// keep the file open.
+// keep the file open. openFDs is the per-OS fd primitive (/proc on Linux,
+// lsof on macOS).
 func fdSession(pid int, proj string) string {
-	dir := filepath.Join(Root(), strconv.Itoa(pid), "fd")
-	des, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	for _, de := range des {
-		t, err := os.Readlink(filepath.Join(dir, de.Name()))
-		if err != nil {
-			continue
-		}
+	for _, t := range openFDs(pid) {
 		if strings.HasPrefix(t, proj+string(os.PathSeparator)) && strings.HasSuffix(t, ".jsonl") {
 			return t
 		}
@@ -254,16 +246,7 @@ func CodexRollouts(home, cwd string) []CodexRollout {
 // it; the held fd does not. Mirrors fdSession but matches any rollout, since a
 // resumed session's cwd need not equal the rollout's recorded cwd.
 func CodexFDSession(pid int) string {
-	dir := filepath.Join(Root(), strconv.Itoa(pid), "fd")
-	des, err := os.ReadDir(dir)
-	if err != nil {
-		return ""
-	}
-	for _, de := range des {
-		t, err := os.Readlink(filepath.Join(dir, de.Name()))
-		if err != nil {
-			continue
-		}
+	for _, t := range openFDs(pid) {
 		if strings.Contains(t, "/.codex/sessions/") &&
 			strings.HasPrefix(filepath.Base(t), "rollout-") &&
 			strings.HasSuffix(t, ".jsonl") {

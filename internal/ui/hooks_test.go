@@ -177,11 +177,18 @@ func TestBuildPayload(t *testing.T) {
 func TestRunHookExec(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "fired")
-	r := board.Row{PID: 99, Kind: "claude", Status: "stuck?", Need: true, Task: "merge"}
+	// Synchronize on completion, not timing: the hook writes to a temp file and
+	// atomically renames it into place, so `out` appears only once fully written
+	// and the poll below can never read a half-flushed prefix. (This race was
+	// platform-independent — Linux just kept winning it; macOS scheduling lost
+	// it on one run, which is how it surfaced in CI.)
+	r := board.Row{PID: 99, Kind: "claude", Status: "stuck?", Need: true, Task: "merge", Cwd: "/home/user/proj"}
 	runHook(hookEvent{
 		name: "stuck",
-		cmd:  "{ printf '%s|%s|' \"$AGENTDASH_EVENT\" \"$AGENTDASH_PID\"; cat; } > " + out,
-		row:  r,
+		cmd: "{ printf '%s|%s|%s|%s|%s|' \"$AGENTDASH_EVENT\" \"$AGENTDASH_PID\" " +
+			"\"$AGENTDASH_AGENT\" \"$AGENTDASH_CWD\" \"$AGENTDASH_STATUS\"; cat; } > " +
+			out + ".part && mv " + out + ".part " + out,
+		row: r,
 	})
 
 	var data []byte
@@ -197,7 +204,7 @@ func TestRunHookExec(t *testing.T) {
 		t.Fatal("hook command never ran")
 	}
 	got := string(data)
-	const wantPrefix = "stuck|99|"
+	const wantPrefix = "stuck|99|claude|/home/user/proj|stuck?|"
 	if len(got) < len(wantPrefix) || got[:len(wantPrefix)] != wantPrefix {
 		t.Fatalf("env vars not passed: %q", got)
 	}
@@ -222,5 +229,35 @@ func TestStatusMap(t *testing.T) {
 	m := statusMap(boardOf(row(1, "working", false), row(2, "idle", false)))
 	if m[1] != "working" || m[2] != "idle" || len(m) != 2 {
 		t.Fatalf("statusMap = %v", m)
+	}
+}
+
+func TestDebounceHooks(t *testing.T) {
+	ev := func(name string, pid int) hookEvent {
+		return hookEvent{name: name, row: board.Row{PID: pid}}
+	}
+	last := map[hookKey]int64{}
+
+	// first fire for a (pid,event) always passes and records the time
+	if got := debounceHooks([]hookEvent{ev("needs_you", 1)}, last, 1000); len(got) != 1 {
+		t.Fatalf("first fire dropped: %v", names(got))
+	}
+	// a re-cross of the same edge within the window is suppressed
+	if got := debounceHooks([]hookEvent{ev("needs_you", 1)}, last, 1000+59); len(got) != 0 {
+		t.Fatalf("re-fire within 60s not suppressed: %v", names(got))
+	}
+	// once the window elapses it fires again
+	if got := debounceHooks([]hookEvent{ev("needs_you", 1)}, last, 1000+60); len(got) != 1 {
+		t.Fatalf("re-fire after 60s suppressed: %v", names(got))
+	}
+	// simultaneous distinct events for one session both fire (working->stuck?
+	// raises needs_you and stuck at the same instant)
+	got := debounceHooks([]hookEvent{ev("needs_you", 2), ev("stuck", 2)}, last, 2000)
+	if len(got) != 2 {
+		t.Fatalf("simultaneous distinct events collapsed: %v", names(got))
+	}
+	// a different session is tracked independently
+	if got := debounceHooks([]hookEvent{ev("needs_you", 3)}, last, 2000); len(got) != 1 {
+		t.Fatalf("distinct session suppressed: %v", names(got))
 	}
 }

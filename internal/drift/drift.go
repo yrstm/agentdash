@@ -21,17 +21,19 @@ import (
 	"github.com/yrstm/agentdash/internal/eventlog"
 )
 
-// Finding is one detected drift item.
+// Finding is one detected drift or context-rot item.
 type Finding struct {
-	ID        string   `json:"id"`         // stable 4-byte hash of (kind, phrase)
-	Kind      string   `json:"kind"`       // missing_rule | stale_rule
-	Phrase    string   `json:"phrase"`     // the recurring instruction or stale ref
-	Count     int      `json:"count"`      // occurrences across prompts
-	WindowS   int64    `json:"window_s"`   // observation window in seconds
-	Uncertain bool     `json:"uncertain"`  // heuristic match: ? convention
-	RuleFile  string   `json:"rule_file,omitempty"` // stale_rule: the file
-	RuleLine  int      `json:"rule_line,omitempty"` // stale_rule: line number
-	Evidence  []string `json:"evidence"`   // supporting prompt excerpts
+	ID         string   `json:"id"`                   // stable 4-byte hash of (kind, phrase)
+	Kind       string   `json:"kind"`                 // missing_rule | stale_rule | conflicting_rule | duplicate_rule | dead_hook | heavy_context
+	Phrase     string   `json:"phrase"`               // the recurring instruction, stale ref, or topic
+	Count      int      `json:"count"`                // occurrences across prompts
+	WindowS    int64    `json:"window_s"`             // observation window in seconds
+	Uncertain  bool     `json:"uncertain"`            // heuristic match: ? convention
+	Severity   string   `json:"severity"`             // info | warn | high
+	RuleFile   string   `json:"rule_file,omitempty"`  // the file a finding points at
+	RuleLine   int      `json:"rule_line,omitempty"`  // line number within RuleFile
+	Evidence   []string `json:"evidence"`             // supporting excerpts
+	Suggestion string   `json:"suggestion,omitempty"` // a suggested fix, printed never applied
 }
 
 // Options controls detection behaviour.
@@ -98,12 +100,26 @@ func Detect(opt Options) []Finding {
 		})
 	}
 
+	for i := range findings {
+		findings[i].Severity = "warn"
+		findings[i].Suggestion = "add this recurring instruction to a CLAUDE.md / rule file so it stops being re-typed"
+	}
+
 	// ── stale rule: config references a path that no longer exists ───────────
 	findings = append(findings, staleRules(inv.Items, opt.Project)...)
 
+	// ── A7 context-rot checks (deterministic, evidence-backed) ───────────────
+	findings = append(findings, conflictingRules(inv.Items)...)
+	findings = append(findings, duplicateRules(inv.Items)...)
+	findings = append(findings, deadHooks(inv.Items, opt.Project)...)
+	findings = append(findings, heavyContext(inv, ctxThreshold())...)
+
 	sort.SliceStable(findings, func(i, j int) bool {
+		if si, sj := sevRank(findings[i].Severity), sevRank(findings[j].Severity); si != sj {
+			return si > sj
+		}
 		if findings[i].Kind != findings[j].Kind {
-			return findings[i].Kind == "stale_rule"
+			return findings[i].Kind < findings[j].Kind
 		}
 		return findings[i].Count > findings[j].Count
 	})
@@ -113,12 +129,14 @@ func Detect(opt Options) []Finding {
 	return findings
 }
 
-// JSON returns a schema_version 1 JSON document for a slice of findings.
+// JSON returns the audit JSON document. schema_version 2 adds the severity /
+// suggestion fields and the A7 context-rot kinds (conflicting_rule,
+// duplicate_rule, dead_hook, heavy_context) — additive over v1, nothing removed.
 func JSON(findings []Finding) ([]byte, error) {
 	doc := struct {
 		SchemaVersion int       `json:"schema_version"`
 		Findings      []Finding `json:"findings"`
-	}{SchemaVersion: 1, Findings: findings}
+	}{SchemaVersion: 2, Findings: findings}
 	if doc.Findings == nil {
 		doc.Findings = []Finding{}
 	}
@@ -349,13 +367,15 @@ func staleRules(items []config.Item, project string) []Finding {
 				}
 				if _, err := os.Stat(abs); os.IsNotExist(err) {
 					out = append(out, Finding{
-						ID:       fingerprintID("stale_rule", it.Path+":"+ref),
-						Kind:     "stale_rule",
-						Phrase:   ref,
-						Count:    1,
-						RuleFile: it.Path,
-						RuleLine: i + 1,
-						Evidence: []string{trunc(line, 120)},
+						ID:         fingerprintID("stale_rule", it.Path+":"+ref),
+						Kind:       "stale_rule",
+						Phrase:     ref,
+						Count:      1,
+						Severity:   "warn",
+						RuleFile:   it.Path,
+						RuleLine:   i + 1,
+						Evidence:   []string{trunc(line, 120)},
+						Suggestion: "update or remove the reference to " + ref + " — the path no longer exists",
 					})
 				}
 			}

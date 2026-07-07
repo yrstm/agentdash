@@ -26,16 +26,23 @@ func DriftFindings(findings []drift.Finding, project string, t Theme) string {
 // DriftFindingDetail renders a single drift finding with evidence.
 func DriftFindingDetail(f drift.Finding, t Theme) string {
 	var b strings.Builder
-	bullet := t.Y
-	if f.Kind == "stale_rule" {
+	bullet := t.D
+	switch f.Severity {
+	case "high":
 		bullet = t.R
+	case "warn":
+		bullet = t.Y
 	}
 	uncertain := ""
 	if f.Uncertain {
 		uncertain = "?"
 	}
-	fmt.Fprintf(&b, "\n  %s[%s]%s %s%s%s%s\n",
-		bullet, f.Kind, t.N,
+	sev := f.Severity
+	if sev == "" {
+		sev = "info"
+	}
+	fmt.Fprintf(&b, "\n  %s[%s %s]%s %s%s%s%s\n",
+		bullet, sev, f.Kind, t.N,
 		t.B, f.Phrase, t.N, uncertain)
 	fmt.Fprintf(&b, "    id: %s", f.ID)
 	if f.Count > 1 {
@@ -46,7 +53,11 @@ func DriftFindingDetail(f drift.Finding, t Theme) string {
 	}
 	b.WriteString("\n")
 	if f.RuleFile != "" {
-		fmt.Fprintf(&b, "    rule: %s:%d\n", shortProj(f.RuleFile), f.RuleLine)
+		if f.RuleLine > 0 {
+			fmt.Fprintf(&b, "    rule: %s:%d\n", shortProj(f.RuleFile), f.RuleLine)
+		} else {
+			fmt.Fprintf(&b, "    rule: %s\n", shortProj(f.RuleFile))
+		}
 	}
 	if len(f.Evidence) > 0 {
 		fmt.Fprintf(&b, "    %sevidence:%s\n", t.D, t.N)
@@ -54,11 +65,8 @@ func DriftFindingDetail(f drift.Finding, t Theme) string {
 			fmt.Fprintf(&b, "      %s%s%s\n", t.D, truncStr(ev, 100), t.N)
 		}
 	}
-	switch f.Kind {
-	case "missing_rule":
-		fmt.Fprintf(&b, "    %ssuggest: add this instruction to your CLAUDE.md or .cursor/rules/%s\n", t.D, t.N)
-	case "stale_rule":
-		fmt.Fprintf(&b, "    %ssuggest: remove or update the path reference in the rule file%s\n", t.D, t.N)
+	if f.Suggestion != "" {
+		fmt.Fprintf(&b, "    %ssuggest: %s%s\n", t.D, f.Suggestion, t.N)
 	}
 	return b.String()
 }

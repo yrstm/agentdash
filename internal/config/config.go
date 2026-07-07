@@ -7,25 +7,33 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
 // Item is one config file or hook entry that shapes agent behaviour.
 type Item struct {
-	Harness string `json:"harness"` // claude-code | cursor | codex
-	Kind    string `json:"kind"`    // instruction | rule | hook | command | settings
-	Scope   string `json:"scope"`   // global | project | parent
-	Path    string `json:"path"`    // absolute path to the file
-	Summary string `json:"summary"` // one-liner extracted from the file
-	Exists  bool   `json:"exists"`
-	Depth   int    `json:"depth,omitempty"` // parent items: dirs above project root
+	Harness  string `json:"harness"` // claude-code | cursor | codex
+	Kind     string `json:"kind"`    // instruction | rule | hook | command | settings
+	Scope    string `json:"scope"`   // global | project | parent
+	Path     string `json:"path"`    // absolute path to the file
+	Summary  string `json:"summary"` // one-liner extracted from the file
+	Exists   bool   `json:"exists"`
+	Depth    int    `json:"depth,omitempty"` // parent items: dirs above project root
+	Bytes    int64  `json:"bytes"`           // file size
+	TokenEst int    `json:"token_est"`       // estimated tokens (~ bytes/4); 0 for hooks
+	Modified int64  `json:"modified"`        // mtime, epoch seconds (0 if unstattable)
+	Tracked  bool   `json:"tracked"`         // tracked in the project's git repo
 }
 
-// Result is the full inventory for one project.
+// Result is the full inventory for one project. AlwaysLoadedTokens is the
+// estimated token cost of the always-loaded instruction chain (the CLAUDE.md /
+// AGENTS.md files that load on every turn), the footer figure for A6.
 type Result struct {
-	Project string `json:"project"`
-	Items   []Item `json:"items"`
+	Project            string `json:"project"`
+	Items              []Item `json:"items"`
+	AlwaysLoadedTokens int    `json:"always_loaded_tokens"`
 }
 
 // Scan collects all config items for a project. project must be an absolute
@@ -43,7 +51,82 @@ func Scan(project, home string, includeGlobal bool) Result {
 	items = append(items, cursorRules(project)...)
 	items = append(items, claudeHooks(project, home, includeGlobal)...)
 	items = append(items, claudeCommands(project, home, includeGlobal)...)
-	return Result{Project: project, Items: items}
+
+	res := Result{Project: project, Items: items}
+	enrich(&res, project)
+	return res
+}
+
+// enrich fills the per-item size / token-estimate / mtime / git-tracked columns
+// and totals the always-loaded instruction tokens. Token cost is estimated as
+// bytes/4 (documented as an estimate); hooks carry no token cost of their own.
+func enrich(res *Result, project string) {
+	tracked := gitTrackedSet(project)
+	sizeCache := map[string][2]int{} // path -> {bytes, tokenEst}
+	for i := range res.Items {
+		it := &res.Items[i]
+		if st, err := os.Stat(it.Path); err == nil {
+			it.Modified = st.ModTime().Unix()
+		}
+		it.Tracked = tracked[resolvePath(it.Path)]
+		if it.Kind == "hook" {
+			continue // a hook is a trigger, not loaded context
+		}
+		sz, ok := sizeCache[it.Path]
+		if !ok {
+			b, _ := os.ReadFile(it.Path)
+			sz = [2]int{len(b), len(b) / 4}
+			sizeCache[it.Path] = sz
+		}
+		it.Bytes = int64(sz[0])
+		it.TokenEst = sz[1]
+		if it.Kind == "instruction" {
+			res.AlwaysLoadedTokens += it.TokenEst // the chain that loads every turn
+		}
+	}
+}
+
+// gitTrackedSet returns the absolute paths git tracks in the project's repo, in
+// one `git ls-files` pass. Empty when the project isn't a git repo (fail-soft);
+// files outside the repo (a parent CLAUDE.md, the global one) are simply absent.
+func gitTrackedSet(project string) map[string]bool {
+	out := map[string]bool{}
+	top, err := exec.Command("git", "-C", project, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return out
+	}
+	root := strings.TrimSpace(string(top))
+	files, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
+	if err != nil {
+		return out
+	}
+	for _, rel := range strings.Split(string(files), "\x00") {
+		if rel != "" {
+			out[resolvePath(filepath.Join(root, rel))] = true
+		}
+	}
+	return out
+}
+
+// resolvePath canonicalizes a path for comparison only — it is used to build
+// the tracked-set keys and the lookup key, never to change Item.Path or any
+// emitted/rendered path (those stay as-discovered). On macOS `git rev-parse
+// --show-toplevel` resolves /var -> /private/var (temp dirs, symlinked homes)
+// while a config item's Path keeps the caller's spelling, so both sides must be
+// canonicalized at the boundary. For a path that does not exist (a dead-path
+// item), EvalSymlinks fails, so canonicalize the nearest existing ancestor and
+// rejoin, falling back to a lexical clean — the path is never dropped.
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	dir, base := filepath.Split(p)
+	if dir != "" {
+		if r, err := filepath.EvalSymlinks(filepath.Clean(dir)); err == nil {
+			return filepath.Join(r, base)
+		}
+	}
+	return filepath.Clean(p)
 }
 
 // claudeInstructions walks from project root toward home collecting CLAUDE.md

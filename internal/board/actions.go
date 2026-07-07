@@ -102,7 +102,7 @@ func Recap(since float64, now float64) []RecapItem {
 	}
 	live := map[string]bool{}
 	for pid, v := range cache.PidMap {
-		if _, err := os.Stat(filepath.Join(procs.Root(), pid)); err == nil {
+		if procs.Alive(pid) {
 			live[v.Path] = true
 		}
 	}
