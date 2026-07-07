@@ -14,15 +14,19 @@ type addFn func(path, agent, model, project string, subagent bool, evs []event, 
 
 // scanClaude walks ~/.claude/projects and emits per-message usage events.
 // Usage blocks are deduped by message id (a resumed/streamed message repeats
-// the same id with the same cumulative usage), matching the board's rule.
+// the same id with the same cumulative usage) — across ALL transcripts, not
+// per file: resuming or forking a session copies prior assistant messages
+// (same ids, same usage) into a new session file, and a per-file map would
+// double-count those copies into the window totals and the attribution
+// table. The first file scanned claims the message.
 func scanClaude(home string, add addFn) {
 	root := filepath.Join(home, ".claude", "projects")
 	repos := map[string]string{}
+	seen := map[string]bool{}
 	walkJSONL(root, func(path string) {
 		var (
 			evs               []event
 			model, cwd, title string
-			seen              = map[string]bool{}
 		)
 		scanLines(path, func(line []byte) {
 			var obj struct {

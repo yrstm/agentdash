@@ -9,7 +9,9 @@ import (
 // secretPattern is a named high-confidence secret matcher. The patterns are
 // deliberately specific (fixed prefixes, exact lengths) to keep false positives
 // low — this is a "you definitely pasted a credential" scan, not entropy
-// guessing.
+// guessing. Order matters: most-specific first — a span claimed by an earlier
+// pattern is skipped by later ones, so an `sk-ant-…` key reports once as
+// anthropic-key instead of also matching the broader openai `sk-` prefix.
 type secretPattern struct {
 	name string
 	re   *regexp.Regexp
@@ -44,9 +46,14 @@ func Secrets(opt Options) []Secret {
 				return
 			}
 			s := string(line)
+			var claimed [][2]int
 			for _, p := range secretPatterns {
-				for _, m := range p.re.FindAllString(s, -1) {
-					masked := mask(m)
+				for _, loc := range p.re.FindAllStringIndex(s, -1) {
+					if overlapsAny(claimed, loc[0], loc[1]) {
+						continue // a more specific earlier pattern owns this span
+					}
+					claimed = append(claimed, [2]int{loc[0], loc[1]})
+					masked := mask(s[loc[0]:loc[1]])
 					key := p.name + "\x00" + masked + "\x00" + st.path
 					if seen[key] {
 						continue
@@ -73,6 +80,16 @@ func lineMeta(line []byte, agent string, st *state) (ts int64, cwd string) {
 	}
 	_, ts = decodeCodex(line, st)
 	return ts, st.cwd
+}
+
+// overlapsAny reports whether [start,end) intersects any claimed span.
+func overlapsAny(claimed [][2]int, start, end int) bool {
+	for _, c := range claimed {
+		if start < c[1] && end > c[0] {
+			return true
+		}
+	}
+	return false
 }
 
 // mask keeps the first 4 characters and replaces the rest with an ellipsis, so
