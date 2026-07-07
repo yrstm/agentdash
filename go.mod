@@ -2,6 +2,11 @@ module github.com/yrstm/agentdash
 
 go 1.25.0
 
+// v1.0.0 was the pre-rewrite (bash) line, tagged by mistake; its proxy
+// snapshot carries stale errors and must not be used. Retracted so tooling
+// (go install @latest, go list) skips it.
+retract v1.0.0
+
 require (
 	github.com/mattn/go-runewidth v0.0.24
 	golang.org/x/term v0.44.0

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.2.4: 2026-07-07
+
+- **Re-versioned to 0.x.** Earlier tags used a 2.x scheme that overstated the
+  project's maturity and — because the module path has no `/v2` suffix — broke
+  `go install @latest`. All versions are renumbered into the 0.x line; this
+  release is v0.2.4 (previously mis-tagged v2.4.0, now deleted). `go install
+  github.com/yrstm/agentdash/cmd/agentdash@latest` works again.
+- **Retracted v1.0.0** (the pre-rewrite bash line, tagged by mistake): its Go
+  proxy snapshot carries stale errors and should not be used.
+
 - macOS support. The collector gains darwin implementations (`ps`/`lsof`/`who`
   behind an injectable exec seam) beside the Linux `/proc` readers; the same
   binary now produces the board on both. `lsof` is a documented macOS
@@ -79,21 +89,21 @@
   instead of a bare `tmux`; and a new FROM column shows the originating host so
   otherwise-identical shells are distinguishable.
 
-## v2.3.0: 2026-06-16
+## v0.2.3: 2026-06-16
 
 - A violet ANSI-Shadow `AGENTDASH` launch banner with a one-glance HUD
   (agents supervised · active · idle, context held-idle vs burning, health)
   now heads the one-shot board on a TTY. Skipped entirely under `--plain`,
   `--json`, or when piped; falls back to a one-line wordmark on narrow panes.
 
-## v2.2.2: 2026-06-16
+## v0.2.2: 2026-06-16
 
 - Collapse an agent's launcher and the real process it spawns into one row:
   a `node /usr/bin/codex` wrapper plus the vendored codex binary it execs were
   showing as two identical rows per chat. A process whose child is another
   agent of the same kind is now treated as the launcher and dropped.
 
-## v2.2.1: 2026-06-15
+## v0.2.1: 2026-06-15
 
 - Stop listing codex's sandboxed tool-call subprocesses (`codex-linux-sandbox`
   / `bwrap`) as agents. Each codex tool call spawns a sandbox process whose
@@ -112,12 +122,12 @@
   pane) flips to needs-you — no notification for agents you're already
   watching.
 
-## v2.1.1: 2026-06-15
+## v0.2.0: 2026-06-15
 
 - `agentdash -w` no longer emits ANSI color when stdout isn't a terminal
   (piped/redirected headless mode), matching the one-shot path.
 
-## v2.1.0: 2026-06-15
+## v0.1.4: 2026-06-15
 
 - `AGENTDASH_EXPAND=1` starts the board expanded, as if `-a` were passed
   (carried over from the v1 bash line).
@@ -138,7 +148,7 @@
 - TASK column is tidied for display: scraped whitespace collapses and an
   unpaired row reads `(no session)`. (The raw task is unchanged in `--json`.)
 
-## v2.0.0: 2026-06-11
+## v0.1.3: 2026-06-11
 
 Rewrite as a single static Go binary; the v1 bash implementation is
 preserved, working, in `legacy/agentdash.sh`.
@@ -165,7 +175,7 @@ preserved, working, in `legacy/agentdash.sh`.
 - Benchmarks before and after under `docs/benchmarks/`; the suite in
   `bench/` reruns on any box.
 
-## v1.1.0: 2026-06-11
+## v0.1.2: 2026-06-11
 
 - One python3 spawn per frame, not two: the header's idle-context figure
   is now formatted in bash instead of a stray `python3 -c`.
@@ -180,7 +190,7 @@ preserved, working, in `legacy/agentdash.sh`.
 - Reproducible benchmark suite under `bench/` and the v1 baseline numbers
   in `docs/benchmarks/v1-baseline.md`.
 
-## v1.0.0: 2026-06-11
+## v0.1.1: 2026-06-11
 
 First release.
 
