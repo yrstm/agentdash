@@ -122,6 +122,29 @@ func TestCollectWindows(t *testing.T) {
 	}
 }
 
+func TestLabelOverridesAttributionTitle(t *testing.T) {
+	// A board rename (a label keyed by transcript path) should also retitle the
+	// session in the usage attribution, not just on the board.
+	home := t.TempDir()
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC).Unix()
+	proj := filepath.Join(home, ".claude", "projects", "-home-user-api")
+	path := filepath.Join(proj, "a.jsonl")
+	write(t, path,
+		`{"type":"user","timestamp":"`+isoAt(now, 600)+`","cwd":"/home/user/api","message":{"role":"user","content":"find the dmg"}}`,
+		claudeUsage(isoAt(now, 600), "m1", "claude-opus-4-8", 100, 0, 0, 50),
+	)
+	// Without a label: the opening prompt.
+	plain := Collect(Options{Home: home, Now: now})
+	if plain.Sessions[0].Title != "find the dmg" {
+		t.Fatalf("baseline title = %q", plain.Sessions[0].Title)
+	}
+	// With a label for that path: the label wins.
+	rep := Collect(Options{Home: home, Now: now, Labels: map[string]string{path: "big redesign"}})
+	if rep.Sessions[0].Title != "big redesign" {
+		t.Errorf("labelled title = %q, want %q", rep.Sessions[0].Title, "big redesign")
+	}
+}
+
 func TestMessageDedupeSpansFiles(t *testing.T) {
 	// Resuming/forking a session copies prior assistant messages (same id,
 	// same usage) into a new session file; the copy must not double-count

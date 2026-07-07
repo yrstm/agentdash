@@ -1064,7 +1064,9 @@ func runUsage(rest []string) {
 		}
 	}
 	home, _ := os.UserHomeDir()
-	rep := usage.Collect(usage.Options{Home: home, Now: time.Now().Unix(), Limit: limit})
+	// Honour board labels so a renamed session reads the same here.
+	labels := board.LoadCacheForActions().Labels
+	rep := usage.Collect(usage.Options{Home: home, Now: time.Now().Unix(), Limit: limit, Labels: labels})
 	if jsonMode {
 		out, err := usage.JSON(rep)
 		emitJSON(out, err)

@@ -37,6 +37,10 @@ type Options struct {
 	Now   int64
 	Limit int64 // optional 5h-window token cap for the projection; 0 = unknown
 	TopN  int   // attribution rows (0 -> 10)
+	// Labels maps a transcript path to a user-set task label; when present it
+	// overrides the transcript-derived attribution title, so a session renamed
+	// on the board reads the same in the usage breakdown.
+	Labels map[string]string
 }
 
 // ModelUse is one model's windowed totals (in includes cache tokens, matching
@@ -209,7 +213,7 @@ func Collect(opt Options) Report {
 	})
 
 	// attribution: top sessions by 5h spend, share of the 5h total
-	for _, s := range sessions {
+	for path, s := range sessions {
 		if s.in5h+s.out5h == 0 {
 			continue
 		}
@@ -218,6 +222,9 @@ func Collect(opt Options) Report {
 			share = 100 * float64(s.in5h+s.out5h) / float64(rep.Total5h)
 		}
 		title := s.title
+		if l := opt.Labels[path]; l != "" { // a board rename wins over the opening prompt
+			title = parse.Clean(l, 80)
+		}
 		if title == "" {
 			title = "(untitled)"
 		}
