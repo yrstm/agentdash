@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- macOS support. The collector gains darwin implementations (`ps`/`lsof`/`who`
+  behind an injectable exec seam) beside the Linux `/proc` readers; the same
+  binary now produces the board on both. `lsof` is a documented macOS
+  dependency. Release binaries now include `darwin-amd64`/`darwin-arm64`, and
+  `install.sh` accepts macOS.
+- New commands, each with `--json` (`schema_version: 1`): `usage` (local
+  token-spend estimate: 5h/7d windows, burn rate, per-session attribution,
+  cache stats), `grep` (regexp search across both agents' transcripts, resume
+  command per hit), `du` (disk triage with suggested — never executed —
+  cleanup commands), `health` (per-agent warning roll-up, exit 0 when clean),
+  `context <row|pid>` (the effective instruction stack for a live session),
+  and `trail` (`commands`/`files`/`secrets` forensics from transcripts, with
+  an approvals-off/sandbox-off headline; secret values always masked).
+- `inspect` gains size/token-estimate/modified/git-tracked columns and an
+  always-loaded footer (`--json` bumped to `schema_version: 2`, additively).
+- `audit` gains four deterministic context-rot checks (`conflicting_rule`,
+  `duplicate_rule`, `dead_hook`, `heavy_context`), severities, suggestions,
+  and `--handoff <file>` (`--json` bumped to `schema_version: 2`, additively).
+  A conflict must now span two files, and a line naming the value it rejects
+  ("use 4 spaces, never tabs") no longer counts as a self-conflict.
+- `docs <file>`: per-file change history — `git log --follow` timeline for
+  tracked files, hash/size snapshots for untracked ones, each change
+  attributed to the agent session that made it when one matches (`--json`
+  bumped to `schema_version: 2`, additively).
+- Watch-mode hooks (`--on-needs-you`/`--on-stuck`) debounce per (session,
+  event) at 60s and export `AGENTDASH_AGENT`/`AGENTDASH_CWD`/
+  `AGENTDASH_STATUS` beside the existing env vars.
+- `usage` dedupes message ids across all transcripts, so resumed/forked
+  sessions no longer double-count; `trail secrets` reports an overlapping
+  match once under its most specific pattern.
+
 - Hermes: multiple live processes that don't export `HERMES_SESSION_ID` no longer
   all collapse onto the newest active session (duplicate rows). Sessions are now
   resolved in one batch that claims each session at most once — exact id matches
