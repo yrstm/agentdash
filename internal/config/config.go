@@ -52,6 +52,11 @@ func Scan(project, home string, includeGlobal bool) Result {
 	items = append(items, claudeHooks(project, home, includeGlobal)...)
 	items = append(items, claudeCommands(project, home, includeGlobal)...)
 
+	if items == nil {
+		// A nil slice marshals as JSON null; keep inspect --json's "items" a
+		// stable array even when no config file exists.
+		items = []Item{}
+	}
 	res := Result{Project: project, Items: items}
 	enrich(&res, project)
 	return res

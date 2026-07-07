@@ -93,6 +93,32 @@ func TestSecrets(t *testing.T) {
 	}
 }
 
+func TestCodexNewRolloutShapes(t *testing.T) {
+	// Newer codex builds emit shell commands as function_call/exec_command
+	// with {"cmd": "..."} arguments and patches as custom_tool_call/apply_patch
+	// with the body in a top-level input field. Shapes below match real
+	// rollouts (paths/commands synthetic).
+	home := t.TempDir()
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC).Unix()
+	ts := time.Unix(now-600, 0).UTC().Format(time.RFC3339)
+	rollout := filepath.Join(home, ".codex", "sessions", "2026", "r.jsonl")
+	write(t, rollout,
+		`{"timestamp":"`+ts+`","type":"session_meta","payload":{"id":"cx2","cwd":"/home/user/api"}}`,
+		`{"timestamp":"`+ts+`","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"pwd\",\"workdir\":\"/home/user/api\",\"yield_time_ms\":10000}","call_id":"call_1"}}`,
+		`{"timestamp":"`+ts+`","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_2","name":"apply_patch","input":"*** Begin Patch\n*** Update File: /home/user/api/main.go\n@@\n+x\n*** End Patch"}}`,
+	)
+
+	cmds := Commands(Options{Home: home, Now: now})
+	if len(cmds) != 1 || cmds[0].Command != "pwd" || cmds[0].Agent != "codex" {
+		t.Fatalf("commands = %+v, want one codex pwd", cmds)
+	}
+
+	files := Files(Options{Home: home, Now: now})
+	if len(files) != 1 || files[0].Path != "/home/user/api/main.go" || files[0].Op != "apply_patch" {
+		t.Fatalf("files = %+v, want one apply_patch of main.go", files)
+	}
+}
+
 func TestSecretsPatternOverlapReportsOnce(t *testing.T) {
 	// An Anthropic key also matches the broader openai `sk-` prefix pattern;
 	// the span-claim rule must yield exactly one finding, the specific one.
