@@ -3,7 +3,7 @@ project_name: agentdash
 builds:
   - main: ./cmd/agentdash
     env: [CGO_ENABLED=0]
-    goos: [linux]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     ldflags: ["-s -w -X main.version={{.Version}}"]
     binary: agentdash
