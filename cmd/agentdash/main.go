@@ -36,12 +36,54 @@ import (
 	"github.com/yrstm/agentdash/internal/usage"
 )
 
-var version = "2.3.1-dev"
+// version is the source default; a release build overrides it with a bare
+// semver via ldflags (goreleaser). The "-dev" suffix marks the source default,
+// so resolveVersion knows to fall back to the embedded build metadata.
+var version = "2.4.0-dev"
 
 // pseudoTSRe pulls the 14-digit UTC timestamp and 12-char hash out of a module
 // pseudo-version (e.g. v0.0.0-20260619123456-abcdef012345), the form that
 // `go install pkg@main` stamps when there is no VCS tree to read.
 var pseudoTSRe = regexp.MustCompile(`-(\d{14})-([0-9a-f]{12})`)
+
+// resolveVersion reports the most truthful version available, so a build's
+// version reflects the *code* rather than how it was compiled:
+//   1. a release build's ldflag-injected semver ("2.4.0"), else
+//   2. the Go module version embedded at install time — a tag like "v2.4.0"
+//      from `go install …@latest`, or a pseudo-version (date+commit) from
+//      `@main`, else
+//   3. a checkout's VCS revision from `go build`, else
+//   4. the source default.
+// Local read only (debug.ReadBuildInfo) — no network.
+func resolveVersion() string {
+	if version != "" && !strings.HasSuffix(version, "-dev") {
+		return version
+	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	if v := bi.Main.Version; v != "" && v != "(devel)" {
+		v = strings.TrimPrefix(v, "v")
+		if m := pseudoTSRe.FindStringSubmatch(v); m != nil { // @main pseudo-version
+			return "dev+" + m[2][:7] + " (" + m[1][:8] + ")"
+		}
+		return v // a clean tag, e.g. 2.4.0
+	}
+	var rev, dirty string
+	for _, s := range bi.Settings {
+		if s.Key == "vcs.revision" && len(s.Value) >= 7 {
+			rev = s.Value[:7]
+		}
+		if s.Key == "vcs.modified" && s.Value == "true" {
+			dirty = "-dirty"
+		}
+	}
+	if rev != "" {
+		return "dev+" + rev + dirty
+	}
+	return version
+}
 
 // buildStamp reports the binary's build age in seconds, its short revision and
 // the dirty flag, read from the embedded VCS stamp (a `go build`/`install` from
@@ -233,7 +275,7 @@ func main() {
 			fmt.Print(usageText)
 			return
 		case "--version":
-			fmt.Println("agentdash", version)
+			fmt.Println("agentdash", resolveVersion())
 			return
 		case "--json":
 			jsonMode = true
