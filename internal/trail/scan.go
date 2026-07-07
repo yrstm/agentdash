@@ -57,8 +57,11 @@ func codexCommands(line []byte, st *state, opt Options) []Command {
 		if strings.Contains(p.Name, "shell") || strings.Contains(p.Name, "exec") {
 			if arr := jsonStringArray(p.Arguments, "command"); len(arr) > 0 {
 				cmd = strings.Join(arr, " ")
+			} else if s := jsonField(json.RawMessage(p.Arguments), "command"); s != "" {
+				cmd = s
 			} else {
-				cmd = jsonField(json.RawMessage(p.Arguments), "command")
+				// Newer codex builds call exec_command with {"cmd": "..."}.
+				cmd = jsonField(json.RawMessage(p.Arguments), "cmd")
 			}
 		}
 	}
@@ -114,13 +117,19 @@ func claudeFiles(line []byte, st *state, opt Options) []FileEdit {
 	return out
 }
 
-// applyPatchFileRe pulls file paths out of a codex apply_patch body.
+// codexFiles pulls file paths out of a codex apply_patch body. Older builds
+// emit it as a function_call with the patch inside the arguments object;
+// newer ones as a custom_tool_call with the patch in a top-level input field.
 func codexFiles(line []byte, st *state, opt Options) []FileEdit {
 	p, ts := decodeCodex(line, st)
-	if p.Type != "function_call" || !strings.Contains(p.Name, "apply_patch") {
+	if (p.Type != "function_call" && p.Type != "custom_tool_call") ||
+		!strings.Contains(p.Name, "apply_patch") {
 		return nil
 	}
-	patch := jsonField(json.RawMessage(p.Arguments), "input")
+	patch := p.Input
+	if patch == "" {
+		patch = jsonField(json.RawMessage(p.Arguments), "input")
+	}
 	if patch == "" {
 		patch = jsonField(json.RawMessage(p.Arguments), "patch")
 	}
@@ -182,6 +191,7 @@ type codexPayload struct {
 	Type      string `json:"type"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+	Input     string `json:"input"` // custom_tool_call carries its body here
 	Action    struct {
 		Command []string `json:"command"`
 	} `json:"action"`
