@@ -5,21 +5,21 @@
 class Agentdash < Formula
   desc "w for your AI agents"
   homepage "https://github.com/yrstm/agentdash"
-  version "2.4.0"
+  version "0.2.4"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/yrstm/agentdash/releases/download/v2.4.0/agentdash-darwin-amd64"
-      sha256 "d18e7b5508aae37457594f4d11daae63018a9d4fc5e4bb30442452316e15b04c"
+      url "https://github.com/yrstm/agentdash/releases/download/v0.2.4/agentdash-darwin-amd64"
+      sha256 "6346a3b9a5acc6f4d823fd7fcf0527895ffa6d51817f4fe62077f41fbe8d5e83"
 
       define_method(:install) do
         bin.install "agentdash-darwin-amd64" => "agentdash"
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/yrstm/agentdash/releases/download/v2.4.0/agentdash-darwin-arm64"
-      sha256 "420d924e496af834f86226b5a11994d56c0a4750170ca60ba670d0c76daad736"
+      url "https://github.com/yrstm/agentdash/releases/download/v0.2.4/agentdash-darwin-arm64"
+      sha256 "5a056ecee017837863d268df52170dbe1ba91655c89d11d8a4b042b543a26f2e"
 
       define_method(:install) do
         bin.install "agentdash-darwin-arm64" => "agentdash"
@@ -29,15 +29,15 @@ class Agentdash < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/yrstm/agentdash/releases/download/v2.4.0/agentdash-linux-amd64"
-      sha256 "3f101a5fe7f768857b459dcce9ff713b89f7e9e63c52fb2d0edaada04639ec59"
+      url "https://github.com/yrstm/agentdash/releases/download/v0.2.4/agentdash-linux-amd64"
+      sha256 "1a1ab6cc3c7acd96ba239a7ce3c16d6e3fcc75eaecfae794e498c902e300ed29"
       define_method(:install) do
         bin.install "agentdash-linux-amd64" => "agentdash"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/yrstm/agentdash/releases/download/v2.4.0/agentdash-linux-arm64"
-      sha256 "00297b333956d6d13672122c9a35d45f9de547cf9161af7a56bea6f9e1fbe5f3"
+      url "https://github.com/yrstm/agentdash/releases/download/v0.2.4/agentdash-linux-arm64"
+      sha256 "5b03d447657845b512f7842d24b1759140994ed788d56f41ffbc2ba4b05eb90d"
       define_method(:install) do
         bin.install "agentdash-linux-arm64" => "agentdash"
       end
