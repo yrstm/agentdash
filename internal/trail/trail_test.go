@@ -93,6 +93,25 @@ func TestSecrets(t *testing.T) {
 	}
 }
 
+func TestSecretsPatternOverlapReportsOnce(t *testing.T) {
+	// An Anthropic key also matches the broader openai `sk-` prefix pattern;
+	// the span-claim rule must yield exactly one finding, the specific one.
+	home := t.TempDir()
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC).Unix()
+	ts := time.Unix(now-600, 0).UTC().Format(time.RFC3339)
+	claude := filepath.Join(home, ".claude", "projects", "-home-user-api", "s2.jsonl")
+	write(t, claude,
+		`{"type":"assistant","timestamp":"`+ts+`","sessionId":"s2","cwd":"/home/user/api","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"export KEY=sk-ant-abcdefghij0123456789abcd"}}]}}`,
+	)
+	secrets := Secrets(Options{Home: home, Now: now})
+	if len(secrets) != 1 {
+		t.Fatalf("secrets = %d (%+v), want exactly 1", len(secrets), secrets)
+	}
+	if secrets[0].Pattern != "anthropic-key" || secrets[0].Masked != "sk-a…" {
+		t.Errorf("secret = %+v, want anthropic-key / sk-a…", secrets[0])
+	}
+}
+
 func TestSinceAndProjectFilters(t *testing.T) {
 	home, now := synthHome(t)
 	// a future cutoff drops everything

@@ -28,8 +28,13 @@ fmt_epoch() { # $1=epoch $2=+format
 iso() { fmt_epoch "$1" +%Y-%m-%dT%H:%M:%S.000Z; } # epoch -> claude/codex timestamp
 ago() { echo $(( REF - $1 )); }                    # seconds-before-ref -> epoch
 # Set a file's mtime from an epoch. `touch -t` (CCYYMMDDhhmm.SS) is accepted by
-# both GNU and BSD touch, unlike GNU-only `touch -d @epoch`.
-touch_at() { touch -t "$(fmt_epoch "$1" +%Y%m%d%H%M.%S)" "$2"; }
+# both GNU and BSD touch, unlike GNU-only `touch -d @epoch`. touch interprets
+# the stamp in LOCAL time, so it must be formatted in local time too — a UTC
+# stamp lands the mtime off by the UTC offset on any non-UTC machine.
+fmt_epoch_local() { # $1=epoch $2=+format
+  if [ "$DATE_MODE" = bsd ]; then date -r "$1" "$2"; else date -d "@$1" "$2"; fi
+}
+touch_at() { touch -t "$(fmt_epoch_local "$1" +%Y%m%d%H%M.%S)" "$2"; }
 
 rm -rf "$DEST"
 mkdir -p "$DEST"

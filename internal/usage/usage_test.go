@@ -122,6 +122,26 @@ func TestCollectWindows(t *testing.T) {
 	}
 }
 
+func TestMessageDedupeSpansFiles(t *testing.T) {
+	// Resuming/forking a session copies prior assistant messages (same id,
+	// same usage) into a new session file; the copy must not double-count
+	// into the window totals.
+	home := t.TempDir()
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC).Unix()
+	proj := filepath.Join(home, ".claude", "projects", "-home-user-api")
+	write(t, filepath.Join(proj, "a.jsonl"),
+		claudeUsage(isoAt(now, 600), "m1", "claude-opus-4-8", 100, 0, 0, 50),
+	)
+	write(t, filepath.Join(proj, "b.jsonl"), // the resumed session's copy
+		claudeUsage(isoAt(now, 600), "m1", "claude-opus-4-8", 100, 0, 0, 50),
+		claudeUsage(isoAt(now, 300), "m2", "claude-opus-4-8", 40, 0, 0, 10),
+	)
+	rep := Collect(Options{Home: home, Now: now})
+	if rep.Total5h != 150+50 { // m1 once (150) + m2 (50)
+		t.Errorf("Total5h = %d, want %d (m1 counted once across files)", rep.Total5h, 200)
+	}
+}
+
 func TestProjectionAndCacheDrop(t *testing.T) {
 	home := t.TempDir()
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC).Unix()

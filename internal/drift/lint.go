@@ -80,9 +80,14 @@ var topicValues = []struct {
 
 // conflictingRules flags a topic asserted with different values in different
 // instruction/rule files (e.g. CLAUDE.md says tabs, a cursor rule says spaces).
+// The conflict must span files: a single file matching two values is almost
+// always one rule naming the value it rejects ("use 4 spaces, never tabs"),
+// not a contradiction.
 func conflictingRules(items []config.Item) []Finding {
 	// topic -> value -> set of "file:line — excerpt"
 	seen := map[string]map[string][]string{}
+	// topic -> set of files asserting any value for it
+	files := map[string]map[string]bool{}
 	for _, it := range items {
 		if it.Kind != "instruction" && it.Kind != "rule" {
 			continue
@@ -92,16 +97,25 @@ func conflictingRules(items []config.Item) []Finding {
 				if !tv.gate.MatchString(line) {
 					continue
 				}
+				var matched []string
 				for val, re := range tv.values {
-					if !re.MatchString(line) {
-						continue
+					if re.MatchString(line) {
+						matched = append(matched, val)
 					}
-					if seen[tv.topic] == nil {
-						seen[tv.topic] = map[string][]string{}
-					}
-					ev := shortPath(it.Path) + ":" + strconv.Itoa(i+1) + " — " + trunc(line, 80)
-					seen[tv.topic][val] = append(seen[tv.topic][val], ev)
 				}
+				// A line matching two values names the one it rejects
+				// ("use 4 spaces, never tabs") — it disambiguates itself
+				// and asserts nothing we can count deterministically.
+				if len(matched) != 1 {
+					continue
+				}
+				if seen[tv.topic] == nil {
+					seen[tv.topic] = map[string][]string{}
+					files[tv.topic] = map[string]bool{}
+				}
+				ev := shortPath(it.Path) + ":" + strconv.Itoa(i+1) + " — " + trunc(line, 80)
+				seen[tv.topic][matched[0]] = append(seen[tv.topic][matched[0]], ev)
+				files[tv.topic][it.Path] = true
 			}
 		}
 	}
@@ -109,6 +123,9 @@ func conflictingRules(items []config.Item) []Finding {
 	for topic, byVal := range seen {
 		if len(byVal) < 2 {
 			continue // one value asserted (or none) — not a conflict
+		}
+		if len(files[topic]) < 2 {
+			continue // both values in one file — a rule naming its rejected value
 		}
 		var vals []string
 		var evidence []string

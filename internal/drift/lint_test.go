@@ -56,6 +56,35 @@ func TestConflictingAndDuplicateRules(t *testing.T) {
 	}
 }
 
+func TestConflictingRuleNeedsTwoFiles(t *testing.T) {
+	// One rule naming the value it rejects ("never tabs") matches both value
+	// regexps on the same line — that is emphasis, not a conflict.
+	proj := t.TempDir()
+	claude := filepath.Join(proj, "CLAUDE.md")
+	writeFile(t, claude, "Use 4 spaces for indentation, never tabs.\n")
+	items := []config.Item{{Kind: "instruction", Path: claude}}
+	if got := findKind(conflictingRules(items), "conflicting_rule"); got != nil {
+		t.Errorf("single-file rule flagged as conflict: %+v", got)
+	}
+
+	// Same self-referencing line plus a second file agreeing — still no
+	// conflict: both values only ever co-occur in the one file.
+	agree := filepath.Join(proj, ".cursor", "rules", "style.mdc")
+	writeFile(t, agree, "Indent with 4 spaces.\n")
+	items = append(items, config.Item{Kind: "rule", Path: agree})
+	if got := findKind(conflictingRules(items), "conflicting_rule"); got != nil {
+		t.Errorf("agreeing files flagged as conflict: %+v", got)
+	}
+
+	// A genuinely opposing second file still fires.
+	oppose := filepath.Join(proj, "AGENTS.md")
+	writeFile(t, oppose, "Indent with tabs.\n")
+	items = append(items, config.Item{Kind: "instruction", Path: oppose})
+	if got := findKind(conflictingRules(items), "conflicting_rule"); got == nil {
+		t.Error("cross-file conflict not detected")
+	}
+}
+
 func TestDeadHooks(t *testing.T) {
 	proj := t.TempDir()
 	settings := filepath.Join(proj, ".claude", "settings.json")
