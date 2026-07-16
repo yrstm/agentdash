@@ -13,13 +13,15 @@ import (
 
 // Opts steers one frame's rendering.
 type Opts struct {
-	Long       bool
-	Expand     bool
-	Width      int
-	Home       string         // for ~ abbreviation in paths
-	SelPID     int            // watch-mode cursor; 0 = none
-	PrevStatus map[int]string // watch mode: bold a status that flipped
-	Watching   bool
+	Long        bool
+	Expand      bool
+	Width       int
+	Home        string         // for ~ abbreviation in paths
+	SelPID      int            // watch-mode cursor; 0 = none
+	PrevStatus  map[int]string // watch mode: bold a status that flipped
+	Watching    bool
+	Filter      string // watch mode: the active row filter, "" when none
+	FilterTotal int    // watch mode: unfiltered row count behind the filter
 }
 
 // Table renders the whole frame (header, agent table, sections) exactly
@@ -81,7 +83,14 @@ func Table(b *board.Board, t Theme, o Opts) string {
 			"AGENT", "LAST", "MODEL", "TOKENS", "CTX", "ACT", "STATUS", "REPO", "WORK", t.N)
 	}
 	if len(b.Rows) == 0 && b.CollapsedNote == "" {
-		w.WriteString("  No agents running (looks for claude, codex, hermes processes).\n")
+		if o.Filter != "" {
+			// an active filter emptied the table: say so, or the summary line
+			// above (which always counts the whole board) reads as a lie
+			fmt.Fprintf(&w, "  0 of %d agents match %s%q%s — esc clears the filter.\n",
+				o.FilterTotal, t.B, o.Filter, t.N)
+		} else {
+			w.WriteString("  No agents running (looks for claude, codex, hermes processes).\n")
+		}
 	}
 	for _, r := range b.Rows {
 		gc := ""
