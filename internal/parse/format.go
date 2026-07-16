@@ -181,3 +181,59 @@ func usableTitle(s string) bool {
 	}
 	return true
 }
+
+// pathToken reports whether one whitespace-delimited token is a bare
+// filesystem path — the shape file drops and paste artifacts open with.
+func pathToken(tok string) bool {
+	for _, p := range []string{"/", "~/", "./", "file://"} {
+		if strings.HasPrefix(tok, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// sepToken reports whether a token is pure punctuation joining a dropped
+// path to the prompt that follows it ("- ", "— ", ": " …).
+func sepToken(tok string) bool {
+	for _, r := range tok {
+		if !strings.ContainsRune("-–—:;,·", r) {
+			return false
+		}
+	}
+	return tok != ""
+}
+
+// TitleFrom derives a row title from one user message, or ok=false meaning
+// "not a prompt — try a later message". On top of usableTitle it rejects
+// content that opens like a markdown document (# headers, code fences):
+// codex embeds AGENTS.md as the rollout's first user message, which titled
+// every codex row "# AGENTS.md instructions for …". It also strips leading
+// file-drop path tokens, so "/tmp/notes.md - review this" titles as
+// "review this"; a message that is only paths titles nothing.
+func TitleFrom(s string) (string, bool) {
+	if !usableTitle(s) {
+		return "", false
+	}
+	f := strings.Fields(s)
+	if len(f) == 0 {
+		return "", false
+	}
+	if strings.HasPrefix(f[0], "#") || strings.HasPrefix(f[0], "```") {
+		return "", false
+	}
+	i := 0
+	for i < len(f) && pathToken(f[i]) {
+		i++
+	}
+	for i < len(f) && sepToken(f[i]) {
+		i++
+	}
+	if i == 0 {
+		return s, true // no leading paths: the message titles as written
+	}
+	if i == len(f) {
+		return "", false
+	}
+	return strings.Join(f[i:], " "), true
+}

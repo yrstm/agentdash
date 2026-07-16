@@ -210,8 +210,10 @@ func updateClaude(ent *Entry, line []byte) {
 		}
 	case "user":
 		txt := firstUserText(obj.Message)
-		if ent.TitleUser == "" && usableTitle(txt) {
-			ent.TitleUser = txt
+		if ent.TitleUser == "" {
+			if t, ok := TitleFrom(txt); ok {
+				ent.TitleUser = t
+			}
 		}
 		// a user line carrying toolUseResult is a tool result, not a human turn
 		if txt != "" && !obj.ToolUseResult {

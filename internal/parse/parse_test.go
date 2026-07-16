@@ -127,6 +127,61 @@ func TestTitleUserSkipsCommandScaffolding(t *testing.T) {
 	eq(t, "Codex TitleUser", ent.TitleUser, "repair the data sync")
 }
 
+func TestTitleFrom(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		// markdown-document openers are instruction content, not prompts —
+		// codex embeds AGENTS.md as the rollout's first user message
+		{"# AGENTS.md instructions for /code/synth\n\n# AGENTS.md — synth", "", false},
+		{"```go\nfunc main() {}\n```", "", false},
+		// leading file-drop paths strip down to the prompt that follows
+		{"/tmp/drop-0000-example.md - review the notes", "review the notes", true},
+		{"/tmp/a-example.md /tmp/b-example.md compare these two", "compare these two", true},
+		{"~/notes/plan.md: implement step one", "implement step one", true},
+		// a message that is only paths titles nothing
+		{"/home/user/dev/scraper", "", false},
+		{"/tmp/one.md /tmp/two.md", "", false},
+		// paths mid-sentence are untouched; ordinary prompts pass through
+		{"fix /code/foo/bar.go please", "fix /code/foo/bar.go please", true},
+		{"tell me the total due this week", "tell me the total due this week", true},
+		{"1. Find by recency and parse (quickest)", "1. Find by recency and parse (quickest)", true},
+		// usableTitle rejections still hold
+		{"/clear", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, ok := TitleFrom(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("TitleFrom(%q) = (%q, %v), want (%q, %v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// A codex rollout opens with embedded instructions; the real prompt arrives
+// later and must win the title. Same for a claude session opened by a file
+// drop: the path strips, the request remains.
+func TestTitleUserSkipsInstructionFilesAndDrops(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "c.jsonl")
+	body := `{"type":"event_msg","payload":{"type":"user_message","message":"# AGENTS.md instructions for /code/synth"}}` + "\n" +
+		`{"type":"event_msg","payload":{"type":"user_message","message":"wire the exporter to the new schema"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ent := ScanSession(path, NewCache(), "codex", tNow)
+	eq(t, "Codex TitleUser", ent.TitleUser, "wire the exporter to the new schema")
+
+	path = filepath.Join(t.TempDir(), "s.jsonl")
+	body = `{"type":"user","message":{"content":"/tmp/drop-1111-example.md - rework the intro section"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ent = ScanSession(path, NewCache(), "claude", tNow)
+	eq(t, "Claude TitleUser", ent.TitleUser, "rework the intro section")
+}
+
 // The repo-level fixtures are the contract the v1 bats suite asserts
 // against; the Go parser must read them identically.
 func TestV1RepoFixtures(t *testing.T) {

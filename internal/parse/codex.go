@@ -49,8 +49,10 @@ func updateCodex(ent *Entry, line []byte) {
 			if ts := isoEpoch(obj.Timestamp); ts != 0 {
 				ent.LastUserTS = ts
 			}
-			if ent.TitleUser == "" && usableTitle(pay.Message) {
-				ent.TitleUser = pay.Message
+			if ent.TitleUser == "" {
+				if t, ok := TitleFrom(pay.Message); ok {
+					ent.TitleUser = t
+				}
 			}
 		case "agent_message":
 			ent.LastType = "assistant"
@@ -84,8 +86,8 @@ func updateCodex(ent *Entry, line []byte) {
 					}
 					if json.Unmarshal(r, &p) == nil &&
 						(p.Type == "input_text" || p.Type == "text") {
-						if usableTitle(p.Text) {
-							ent.TitleUser = p.Text
+						if t, ok := TitleFrom(p.Text); ok {
+							ent.TitleUser = t
 							break
 						}
 					}
