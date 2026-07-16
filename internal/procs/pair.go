@@ -287,6 +287,67 @@ func LocateCodex(home, cwd string, start int64) (string, bool) {
 	return MatchCodex(CodexRollouts(home, cwd), start)
 }
 
+// PairCodex pairs a batch of codex processes with rollouts, claiming each
+// rollout at most once — the same rule PairClaude applies to session files.
+// Resolved per process, two `codex resume`s of one session rendered as
+// identical clone rows and the session double-counted in the header tallies.
+// Evidence tiers, newer process first within each tier (as PairClaude):
+//
+//  1. fd   : an open rollout under ~/.codex/sessions (exact). A process whose
+//     held rollout is already claimed is a second attach to the same session:
+//     it stays unpaired outright — exact evidence names its session, so
+//     falling through to a timestamp match would fabricate a different one.
+//  2. meta : the cwd rollout with the closest filename timestamp within
+//     TSSlack, among rollouts not yet claimed.
+//
+// Anything left unpaired surfaces through the existing `+N unmatched` footer
+// (and -a), never as a duplicate row.
+func PairCodex(agents []Proc, home string) map[int]Pairing {
+	res := map[int]Pairing{}
+	if len(agents) == 0 {
+		return res
+	}
+	procs := append([]Proc(nil), agents...)
+	sort.Slice(procs, func(i, j int) bool { return procs[i].Uptime < procs[j].Uptime })
+
+	claimed := map[string]bool{}
+	cands := map[string][]CodexRollout{}
+	rolloutsFor := func(cwd string) []CodexRollout {
+		c, ok := cands[cwd]
+		if !ok {
+			c = CodexRollouts(home, cwd)
+			cands[cwd] = c
+		}
+		return c
+	}
+
+	var pending []Proc
+	for _, pr := range procs {
+		switch fp := CodexFDSession(pr.PID); {
+		case fp != "" && !claimed[fp]:
+			res[pr.PID] = Pairing{fp, true, "fd"}
+			claimed[fp] = true
+		case fp != "":
+			// second attach to a claimed session: leave unpaired (see above)
+		default:
+			pending = append(pending, pr)
+		}
+	}
+	for _, pr := range pending {
+		var free []CodexRollout
+		for _, r := range rolloutsFor(pr.Cwd) {
+			if !claimed[r.Path] {
+				free = append(free, r)
+			}
+		}
+		if mp, ok := MatchCodex(free, pr.Start); ok {
+			res[pr.PID] = Pairing{mp, true, "meta"}
+			claimed[mp] = true
+		}
+	}
+	return res
+}
+
 func metaCwd(path string) string {
 	f, err := os.Open(path)
 	if err != nil {

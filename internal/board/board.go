@@ -193,28 +193,18 @@ func Collect(now int64, opt Options) *Board {
 	if externalBatch != nil {
 		externalPairings = externalBatch(agents, h, cache, newPidMap)
 	}
-	codexCands := map[string][]procs.CodexRollout{}
-	codexRollouts := func(cwd string) []procs.CodexRollout {
-		c, ok := codexCands[cwd]
-		if !ok {
-			c = procs.CodexRollouts(h, cwd)
-			codexCands[cwd] = c
+	// codex resolves as one batch (an open fd is exact and catches resumed
+	// sessions; otherwise the start-time match) so each rollout is claimed at
+	// most once — per-process resolution let two resumes of one session render
+	// as identical clone rows. One map serves the scan pass and the row pass
+	// so the two never disagree.
+	var codexProcs []procs.Proc
+	for _, p := range agents {
+		if p.Kind != "claude" && !procs.WrapperKinds[p.Kind] && !isExternalKind(p.Kind) {
+			codexProcs = append(codexProcs, p)
 		}
-		return c
 	}
-	// codexPath resolves a codex process to its rollout: an open fd is exact and
-	// catches resumed sessions (whose filename timestamp predates the process),
-	// otherwise fall back to the start-time match. Shared by the scan pass and
-	// the pairing pass so the two never disagree.
-	codexPath := func(p procs.Proc) (path string, sure bool, how string) {
-		if fp := procs.CodexFDSession(p.PID); fp != "" {
-			return fp, true, "fd"
-		}
-		if mp, ok := procs.MatchCodex(codexRollouts(p.Cwd), p.Start); ok {
-			return mp, ok, "meta"
-		}
-		return "", false, ""
-	}
+	codexPairings := procs.PairCodex(codexProcs, h)
 
 	// resolve every pairing first so the session files can be scanned in
 	// one parallel pass; on a cold cache the wall time is the largest
@@ -232,8 +222,8 @@ func Collect(now int64, opt Options) *Board {
 		case isExternalKind(p.Kind):
 			// read directly from its own store below, not the codex locator
 		default:
-			if path, _, _ := codexPath(p); path != "" {
-				scanJobs[path] = p.Kind
+			if pr := codexPairings[p.PID]; pr.Path != "" {
+				scanJobs[pr.Path] = p.Kind
 			}
 		}
 	}
@@ -298,14 +288,15 @@ func Collect(now int64, opt Options) *Board {
 				}
 			default:
 				// codex pairs on an open rollout fd (exact; catches resumed
-				// sessions) or a start-time match. A same-cwd-only match is
+				// sessions) or a start-time match, batch-resolved above so a
+				// rollout is claimed at most once. A same-cwd-only match is
 				// rejected so old processes in a busy cwd (e.g. ~) don't inherit
 				// the newest unrelated rollout.
-				if path, sure, how := codexPath(p); path != "" {
-					pairing = procs.Pairing{Path: path, Sure: sure, How: how}
+				if pr := codexPairings[p.PID]; pr.Path != "" {
+					pairing = pr
 					newPidMap[strconv.Itoa(p.PID)] = parse.PidInfo{
-						Path: path, Start: float64(p.Start), Sure: sure,
-						Cwd: p.Cwd, How: how, Kind: p.Kind}
+						Path: pr.Path, Start: float64(p.Start), Sure: pr.Sure,
+						Cwd: p.Cwd, How: pr.How, Kind: p.Kind}
 				}
 			}
 			row.Task = noSession
