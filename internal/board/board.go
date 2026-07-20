@@ -186,7 +186,7 @@ func Collect(now int64, opt Options) *Board {
 	panes := procs.PanesByTTY()
 
 	newPidMap := map[string]parse.PidInfo{}
-	pairings := procs.PairClaude(agents, h, cache.PidMap, newPidMap)
+	pairings := procs.PairClaude(agents, h, now, cache.PidMap, newPidMap)
 	// external kinds (e.g. Hermes) are resolved in one batch so the adapter can
 	// claim each session at most once; nil in the default build.
 	var externalPairings map[int]procs.Pairing

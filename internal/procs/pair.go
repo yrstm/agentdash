@@ -63,6 +63,12 @@ func fdSession(pid int, proj string) string {
 	return ""
 }
 
+// followFreshS bounds the follow tier: a successor session only counts as
+// this process's current work while its file is still being written (within
+// the idle threshold's order of magnitude). A trail gone quiet displays as
+// idle either way, so past that we stop guessing and keep start-ts.
+const followFreshS = 600
+
 // PairClaude pairs every claude pid with a session file, walking the
 // evidence chain per cwd group (several processes can share one project
 // dir, so this is a batch pass):
@@ -70,12 +76,18 @@ func fdSession(pid int, proj string) string {
 //  1. fd      : a jsonl open under /proc/<pid>/fd (exact)
 //  2. cwd     : the project dir holds exactly one live candidate (exact)
 //  3. start-ts: first entry timestamp ~ process start, ±5min (confident;
-//     re-derived each draw, twin ties go to the freshest file)
+//     re-derived each draw, twin ties go to the freshest file), upgraded
+//     by the follow rule: a long-lived process starts a fresh session file
+//     on every /clear, so when the start-ts match has a *newer* unclaimed
+//     sibling that no live process's start explains and that is still
+//     being written (followFreshS), the process is paired to that newest
+//     successor instead — otherwise a live, working agent renders as an
+//     idle corpse stuck on the file it stopped writing days ago.
 //  4. sticky  : last draw's guess (heuristic, marked ?)
 //  5. recency : newest unclaimed file written since proc start (marked ?)
 //
 // prevPidMap is last draw's _pidmap; newPidMap collects this draw's.
-func PairClaude(agents []Proc, home string, prevPidMap map[string]parse.PidInfo,
+func PairClaude(agents []Proc, home string, now int64, prevPidMap map[string]parse.PidInfo,
 	newPidMap map[string]parse.PidInfo) map[int]Pairing {
 
 	byCwd := map[string][]Proc{}
@@ -155,7 +167,11 @@ func PairClaude(agents []Proc, home string, prevPidMap map[string]parse.PidInfo,
 				}
 			}
 			if best != "" {
-				assign(pr.PID, best, pr.Start, true, "start-ts")
+				if s := followFrom(best, pr, procs, paths, claimed, fts, now); s != "" {
+					assign(pr.PID, s, pr.Start, true, "follow")
+				} else {
+					assign(pr.PID, best, pr.Start, true, "start-ts")
+				}
 			} else {
 				rest2 = append(rest2, pr)
 			}
@@ -187,6 +203,49 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// followFrom implements the start-ts follow rule: given the file whose first
+// entry matched this process's start, return the newest unclaimed sibling
+// that (a) began after it, (b) is explained by no live process's start in
+// this cwd group — a concurrently-started process claims its own file via
+// its own start-ts — and (c) is still being written (followFreshS). ""
+// means keep the start-ts match. paths arrive newest-mtime-first, so the
+// first hit is the newest successor.
+func followFrom(best string, pr Proc, group []Proc, paths []string,
+	claimed map[string]bool, fts func(string) int64, now int64) string {
+	bt := fts(best)
+	for _, p := range paths {
+		if p == best || claimed[p] {
+			continue
+		}
+		t := fts(p)
+		if t == 0 || t <= bt {
+			continue
+		}
+		owned := false
+		for _, other := range group {
+			if other.PID == pr.PID {
+				continue
+			}
+			d := t - other.Start
+			if d < 0 {
+				d = -d
+			}
+			if d <= TSSlack {
+				owned = true
+				break
+			}
+		}
+		if owned {
+			continue
+		}
+		if mtimeOf(p) < float64(now-followFreshS) {
+			continue
+		}
+		return p
+	}
+	return ""
 }
 
 var codexTSRe = regexp.MustCompile(`rollout-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})`)
