@@ -519,8 +519,14 @@ Pairing a process to a session file walks an evidence chain: an open fd
 in /proc, then a unique session file in the project dir for the process
 cwd, then a first-entry timestamp within 5 minutes of process start,
 then a sticky previous guess, then the newest unclaimed recent file
-(the last two are heuristic and marked `?`). Codex sessions pair on an
-open rollout fd first (exact, and the only thing that catches a
+(the last two are heuristic and marked `?`). The timestamp tier also
+follows a cleared session: a long-lived process starts a new file on
+every `/clear`, so when the file matching the process start has a newer
+unclaimed sibling that no other live process explains and that was
+written in the last 10 minutes, the process pairs to that newest file
+instead — otherwise an agent that cleared its context days ago would
+keep rendering as idle on its first, dead file. Codex sessions pair on
+an open rollout fd first (exact, and the only thing that catches a
 `codex resume`, whose rollout filename keeps its original start time),
 otherwise on the cwd and start time recorded in the rollout file.
 `agentdash why <row>` prints which tier applied.
