@@ -225,8 +225,10 @@ func updateClaude(ent *Entry, line []byte) {
 		if obj.Message == nil {
 			return
 		}
-		if obj.Message.Model != "" {
-			ent.Model = obj.Message.Model
+		// "<synthetic>" is the model id on system-generated messages; it
+		// must not displace the session's real model in the MODEL column
+		if m := obj.Message.Model; m != "" && m != "<synthetic>" {
+			ent.Model = m
 		}
 		if txt := firstUserText(obj.Message); txt != "" {
 			ent.LastText = truncRunes(collapseWS(txt), lastTextW)
