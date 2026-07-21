@@ -329,3 +329,46 @@ func TestStatusOf(t *testing.T) {
 	eq(t, "busy", StatusOf(&Entry{Mtime: now - 70, LastType: "user"}, 0, now, th), "busy?")
 	eq(t, "respawn", StatusOf(&Entry{Mtime: now - 10}, 4, now, th), "respawn ×4")
 }
+
+// A mixed-version cache: entries scanned by an older binary must be fully
+// rescanned by this one, or a derivation change (titles, model filtering)
+// never reaches files that stopped growing. This is the long-running-old-
+// watcher case: a stale `agentdash -w` kept rewriting v6 entries that the
+// upgraded binary then trusted forever.
+func TestOldParserVersionEntryIsRescanned(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	body := `{"type":"user","timestamp":"2026-01-01T00:00:00.000Z","message":{"content":"fix the exporter"}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCache()
+	// simulate an old binary's entry: fully scanned, junk title, stale V
+	st, _ := os.Stat(path)
+	c.Entries[path] = &Entry{Kind: "claude", V: ParserV - 1, Offset: st.Size(),
+		TitleUser: "# AGENTS.md instructions for /x"}
+	ent := ScanSession(path, c, "claude", tNow)
+	eq(t, "V", ent.V, ParserV)
+	eq(t, "TitleUser after rescan", ent.TitleUser, "fix the exporter")
+}
+
+// system-generated messages carry model "<synthetic>": it must not displace
+// the session's real model (a board row read "<syntheti…" in the MODEL column).
+func TestSyntheticModelDoesNotDisplaceReal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	body := `{"type":"assistant","message":{"id":"m1","model":"claude-fable-5","usage":{"input_tokens":10}}}` + "\n" +
+		`{"type":"assistant","message":{"id":"m2","model":"<synthetic>","usage":{"input_tokens":5}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ent := ScanSession(path, NewCache(), "claude", tNow)
+	eq(t, "Model", ent.Model, "claude-fable-5")
+
+	// a session with only synthetic messages reports no model at all
+	path = filepath.Join(t.TempDir(), "s2.jsonl")
+	body = `{"type":"assistant","message":{"id":"m1","model":"<synthetic>","usage":{"input_tokens":5}}}` + "\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ent = ScanSession(path, NewCache(), "claude", tNow)
+	eq(t, "Model (synthetic only)", ent.Model, "")
+}

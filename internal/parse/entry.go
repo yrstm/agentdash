@@ -7,9 +7,13 @@
 // weird line, just skip it.
 package parse
 
-// ParserV is bumped when parsers extract new fields: forces a one-time
-// rescan. It tracks the v1 PARSER_V so a v1 cache survives the upgrade.
-const ParserV = 6
+// ParserV is bumped when parsers extract new fields OR derive an existing
+// field differently: forces a one-time rescan. It tracks the v1 PARSER_V so
+// a v1 cache survives the upgrade. v7: title derivation changed (prompts,
+// not instruction files or path drops) and <synthetic> model ids are
+// ignored — cached v6 titles and models persist otherwise, since an
+// unchanged file is never rescanned.
+const ParserV = 7
 
 // Entry is one session file's accumulated state. The JSON tags match the
 // v1 Python cache exactly so ~/.cache/agentdash/usage.json round-trips
