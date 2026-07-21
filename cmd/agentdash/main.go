@@ -26,10 +26,12 @@ import (
 	"github.com/yrstm/agentdash/internal/filehist"
 	"github.com/yrstm/agentdash/internal/grep"
 	"github.com/yrstm/agentdash/internal/health"
+	"github.com/yrstm/agentdash/internal/history"
 	"github.com/yrstm/agentdash/internal/jsonout"
 	"github.com/yrstm/agentdash/internal/memory"
 	"github.com/yrstm/agentdash/internal/parse"
 	"github.com/yrstm/agentdash/internal/paths"
+	"github.com/yrstm/agentdash/internal/procs"
 	"github.com/yrstm/agentdash/internal/render"
 	"github.com/yrstm/agentdash/internal/trail"
 	"github.com/yrstm/agentdash/internal/ui"
@@ -48,12 +50,13 @@ var pseudoTSRe = regexp.MustCompile(`-(\d{14})-([0-9a-f]{12})`)
 
 // resolveVersion reports the most truthful version available, so a build's
 // version reflects the *code* rather than how it was compiled:
-//   1. a release build's ldflag-injected semver ("2.4.0"), else
-//   2. the Go module version embedded at install time — a tag like "v2.4.0"
-//      from `go install …@latest`, or a pseudo-version (date+commit) from
-//      `@main`, else
-//   3. a checkout's VCS revision from `go build`, else
-//   4. the source default.
+//  1. a release build's ldflag-injected semver ("2.4.0"), else
+//  2. the Go module version embedded at install time — a tag like "v2.4.0"
+//     from `go install …@latest`, or a pseudo-version (date+commit) from
+//     `@main`, else
+//  3. a checkout's VCS revision from `go build`, else
+//  4. the source default.
+//
 // Local read only (debug.ReadBuildInfo) — no network.
 func resolveVersion() string {
 	if version != "" && !strings.HasSuffix(version, "-dev") {
@@ -189,6 +192,9 @@ usage: agentdash [flags | subcommand]
                      search past sessions of both agents (regexp over message
                      text; --tools widens it to tool payloads). One line per
                      matching session, newest first, with a resume command
+  sessions [--project <dir>] [--since 30d] [-n N] [--json]
+                     chronological session history without requiring a search
+                     term: agent, cwd/repo, activity, live state, and resume
   du [--json]        disk triage: agent file sizes by category, largest first,
                      with what each is and a suggested cleanup (never deletes)
   usage [--limit N] [--json]
@@ -247,6 +253,9 @@ func main() {
 			return
 		case "grep":
 			runGrep(args[1:])
+			return
+		case "sessions":
+			runSessions(args[1:])
 			return
 		case "du":
 			runDu(args[1:])
@@ -1216,6 +1225,84 @@ func printDu(res du.Result, t render.Theme, home string) {
 		if c.Cleanup != "" {
 			fmt.Printf("          %scleanup:%s %s\n", t.Y, t.N, c.Cleanup)
 		}
+	}
+}
+
+// runSessions lists conversations newest-first without requiring a search term.
+func runSessions(rest []string) {
+	var project, since string
+	var jsonMode bool
+	maxN := 0
+	for i := 0; i < len(rest); i++ {
+		switch rest[i] {
+		case "--json":
+			jsonMode = true
+		case "--project":
+			if i+1 < len(rest) {
+				i++
+				project = rest[i]
+			}
+		case "--since":
+			if i+1 < len(rest) {
+				i++
+				since = rest[i]
+			}
+		case "-n":
+			if i+1 < len(rest) {
+				i++
+				maxN, _ = strconv.Atoi(rest[i])
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "agentdash: sessions: unknown argument %q\n", rest[i])
+			os.Exit(2)
+		}
+	}
+	var cutoff int64
+	if since != "" {
+		d, ok := parseSince(since)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "agentdash: sessions --since takes a window like 30m, 4h, 7d")
+			os.Exit(2)
+		}
+		cutoff = time.Now().Unix() - d
+	}
+	live := map[string]bool{}
+	for pid, info := range board.LoadCacheForActions().PidMap {
+		if procs.Alive(pid) {
+			live[info.Path] = true
+		}
+	}
+	home, _ := os.UserHomeDir()
+	res := history.Collect(home, live)
+	filtered := res.Sessions[:0]
+	for _, s := range res.Sessions {
+		if cutoff != 0 && s.Last < cutoff {
+			continue
+		}
+		if project != "" && !strings.Contains(s.Cwd, project) && !strings.Contains(s.Repo, project) {
+			continue
+		}
+		filtered = append(filtered, s)
+		if maxN > 0 && len(filtered) >= maxN {
+			break
+		}
+	}
+	res.Sessions = filtered
+	if jsonMode {
+		out, err := history.JSON(res)
+		emitJSON(out, err)
+		return
+	}
+	for _, s := range res.Sessions {
+		state := "ended"
+		if s.Live {
+			state = "live"
+		}
+		fmt.Printf("  %-5s %-7s %-6s %s\n", parse.Ago(time.Now().Unix()-s.Last), s.Agent, state, s.Title)
+		fmt.Printf("       %s\n       resume: %s\n", shortenHome(s.Cwd, home), s.Resume)
+	}
+	if len(res.Sessions) == 0 {
+		fmt.Println("  no sessions")
 	}
 }
 

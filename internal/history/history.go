@@ -49,24 +49,24 @@ process alive after AgentDash exits.`
 
 // Session is one Claude or Codex conversation as rendered in the History tab.
 type Session struct {
-	Agent      string
-	Path       string
-	SessionID  string
-	Cwd        string
-	Repo       string
-	Title      string
-	Start      int64
-	Last       int64
-	Duration   int64
-	Messages   int
-	Tokens     string
-	Ctx        string
-	CtxTok     int64
-	Live       bool
-	Model      string
-	GitBranch  string
-	Resume     string
-	SkipReason string
+	Agent      string `json:"agent"`
+	Path       string `json:"path"`
+	SessionID  string `json:"session_id"`
+	Cwd        string `json:"cwd"`
+	Repo       string `json:"repo,omitempty"`
+	Title      string `json:"title"`
+	Start      int64  `json:"start"`
+	Last       int64  `json:"last"`
+	Duration   int64  `json:"duration_secs"`
+	Messages   int    `json:"messages"`
+	Tokens     string `json:"tokens,omitempty"`
+	Ctx        string `json:"ctx,omitempty"`
+	CtxTok     int64  `json:"ctx_tokens,omitempty"`
+	Live       bool   `json:"live"`
+	Model      string `json:"model,omitempty"`
+	GitBranch  string `json:"git_branch,omitempty"`
+	Resume     string `json:"resume"`
+	SkipReason string `json:"-"`
 }
 
 // Result is a snapshot of the session stores.
@@ -151,7 +151,7 @@ func normalizePath(p string) string {
 func resumeCmd(s Session) string {
 	cd := ""
 	if s.Cwd != "" {
-		cd = "cd " + s.Cwd + " || exit; "
+		cd = "cd " + s.Cwd + " && "
 	}
 	if s.Agent == "codex" {
 		id := s.SessionID

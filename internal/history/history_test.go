@@ -77,6 +77,9 @@ func TestCollectClaudeAndCodex(t *testing.T) {
 	if !strings.Contains(codexRow.Resume, "codex resume svc") {
 		t.Fatalf("bad codex resume: %q", codexRow.Resume)
 	}
+	if strings.Contains(codexRow.Resume, "exit") || !strings.Contains(codexRow.Resume, " && ") {
+		t.Fatalf("resume is not safely chained: %q", codexRow.Resume)
+	}
 }
 
 func TestMalformedSessionIsSkipped(t *testing.T) {

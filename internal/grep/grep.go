@@ -220,7 +220,7 @@ func snippet(text string, re *regexp.Regexp) string {
 func resumeCmd(agent, cwd, id string) string {
 	cd := ""
 	if cwd != "" {
-		cd = "cd " + cwd + " || exit; "
+		cd = "cd " + cwd + " && "
 	}
 	if agent == "codex" {
 		return cd + "codex resume " + id

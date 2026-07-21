@@ -100,6 +100,7 @@ agentdash resume <row|pid> print the resume command for a session
 agentdash recap [4h]       what changed since you last looked
 agentdash docs [repo|. | <file>]  agent-memory health, drift, and per-file change history (--json)
 agentdash grep <pattern>   search past sessions of both agents (--json for tooling)
+agentdash sessions         browse all sessions newest-first (--json for tooling)
 agentdash du               disk triage: agent file sizes by category (--json for tooling)
 agentdash usage            local token-spend estimate: windows, burn, attribution
 agentdash health           per-agent warning roll-up; exit 0 if nothing flagged
