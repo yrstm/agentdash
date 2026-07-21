@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -52,5 +53,60 @@ func TestViewShowsBannerWithoutColorUnlessPlain(t *testing.T) {
 	m.cfg.Plain = true
 	if out := m.View(); strings.Contains(out, "AGENTDASH") {
 		t.Fatalf("plain watch view should suppress the banner: %q", out)
+	}
+}
+
+// A filter that matches nothing must say so — the summary line always counts
+// the whole board, so a bare "No agents running" under "2 working" reads as
+// the board contradicting itself (the file-drop-into-filter incident).
+func TestViewNamesTheFilterWhenItEmptiesTheTable(t *testing.T) {
+	m := &model{
+		b: &board.Board{Host: "devbox", Load: "0.1", NWork: 2,
+			Rows: []board.Row{{PID: 1, Task: "alpha", TreeCh: " "}, {PID: 2, Task: "beta", TreeCh: " "}}},
+		width: 120, height: 20,
+		cfg:    Config{Theme: render.NewTheme(true)},
+		filter: lineInput{prompt: "/"},
+	}
+	m.applyView()
+	m.handleKey(key{name: "/"})
+	for _, r := range "zzz" {
+		m.handleKey(key{name: string(r), r: r, printable: true})
+	}
+	v := m.View()
+	if strings.Contains(v, "No agents running") {
+		t.Fatalf("filtered-empty view still claims no agents:\n%s", v)
+	}
+	if !strings.Contains(v, `0 of 2 agents match "zzz"`) {
+		t.Fatalf("filtered-empty view does not name the filter:\n%s", v)
+	}
+}
+
+// After scrolling deep (long board, cursor far down), shrinking the selection
+// back up must return the frame to the top: the summary and table header can
+// never stay scrolled away when they fit.
+func TestViewSnapsBackToTop(t *testing.T) {
+	rows := make([]board.Row, 30)
+	for i := range rows {
+		// distinct tasks: identical rows would collapse into one "×30" line
+		rows[i] = board.Row{PID: i + 1, Task: fmt.Sprintf("task %d", i), TreeCh: " "}
+	}
+	m := &model{
+		b:     &board.Board{Host: "devbox-host", Load: "0.1", Rows: rows},
+		width: 120, height: 12,
+		cfg: Config{Theme: render.NewTheme(true)},
+	}
+	m.applyView()
+	m.sel, m.selPID = 25, 26
+	_ = m.View() // scrolls down to keep the cursor visible
+	if m.scroll == 0 {
+		t.Fatal("precondition: deep selection should have scrolled")
+	}
+	m.sel, m.selPID = 0, 1
+	v := m.View()
+	if m.scroll != 0 {
+		t.Fatalf("scroll=%d after selection returned to the top, want 0", m.scroll)
+	}
+	if !strings.Contains(strings.SplitN(v, "\n", 2)[0], "devbox-host") {
+		t.Fatalf("summary line not at the top of the frame:\n%s", v)
 	}
 }

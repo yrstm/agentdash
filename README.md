@@ -370,6 +370,14 @@ The board refreshes on foreground TUI ticks. Process starts and exits
 are picked up by a cheap /proc scan every second (`AGENTDASH_PROC_TICK`);
 the full board and History view resample on the watch interval.
 
+Pasted or dropped text is inert: watch enables bracketed paste, so a
+file path dropped onto the pane cannot press keys (its leading `/` used
+to open the filter and blank the board). Paste lands only inside the
+filter and label inputs, and only as text. When an active filter
+matches nothing, the table says so and how to clear it, instead of
+claiming no agents are running. In panes too short for both, the
+wordmark yields to the agent table.
+
 ## Event hooks
 
 Watch mode can run a command of yours when an agent changes state, so you

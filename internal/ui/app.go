@@ -86,6 +86,7 @@ type key struct {
 	name      string
 	r         rune
 	printable bool
+	paste     bool // arrived inside a bracketed paste: data, never a command
 }
 
 type model struct {
@@ -138,8 +139,10 @@ func Run(cfg Config) error {
 	out := os.Stdout
 	// alt screen, clear it, home the cursor, hide the cursor — a clean first
 	// frame regardless of where the cursor sat or what the alt buffer held.
-	_, _ = io.WriteString(out, "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l")
-	defer func() { _, _ = io.WriteString(out, "\x1b[?25h\x1b[?1049l") }()
+	// alt screen + hidden cursor + bracketed paste, unwound in reverse; paste
+	// mode lets the key decoder tell dropped/pasted text apart from typing
+	_, _ = io.WriteString(out, "\x1b[?1049h\x1b[2J\x1b[H\x1b[?25l\x1b[?2004h")
+	defer func() { _, _ = io.WriteString(out, "\x1b[?2004l\x1b[?25h\x1b[?1049l") }()
 
 	m := &model{
 		cfg:        cfg,
@@ -278,8 +281,13 @@ func readKeys(r io.Reader, ch chan<- key) {
 }
 
 // keyDecoder turns raw bytes into key tokens, holding an incomplete trailing
-// escape or UTF-8 sequence in pending until the rest of it arrives.
-type keyDecoder struct{ pending []byte }
+// escape or UTF-8 sequence in pending until the rest of it arrives. Keys
+// between the bracketed-paste markers (CSI 200~ / 201~) are stamped paste —
+// a file path dropped onto the pane must not open the filter or drive keys.
+type keyDecoder struct {
+	pending []byte
+	inPaste bool
+}
 
 func (d *keyDecoder) feed(b []byte, ch chan<- key) {
 	buf := append(d.pending, b...)
@@ -312,7 +320,7 @@ decode:
 			case 'D':
 				ch <- key{name: "left"}
 				i += 3
-			default: // other CSI: skip to the final byte (@–~), emit nothing
+			default: // other CSI: paste markers flip state, the rest skip silently
 				j := i + 2
 				for j < len(buf) && (buf[j] < 0x40 || buf[j] > 0x7e) {
 					j++
@@ -320,22 +328,28 @@ decode:
 				if j >= len(buf) {
 					break decode // hold an incomplete CSI
 				}
+				switch string(buf[i+2 : j+1]) {
+				case "200~":
+					d.inPaste = true
+				case "201~":
+					d.inPaste = false
+				}
 				i = j + 1
 			}
 		case c == '\r' || c == '\n':
-			ch <- key{name: "enter"}
+			ch <- key{name: "enter", paste: d.inPaste}
 			i++
 		case c == 0x7f || c == 0x08:
-			ch <- key{name: "backspace"}
+			ch <- key{name: "backspace", paste: d.inPaste}
 			i++
 		case c == 0x03:
 			ch <- key{name: "ctrl+c"}
 			i++
 		case c == '\t':
-			ch <- key{name: "tab"}
+			ch <- key{name: "tab", paste: d.inPaste}
 			i++
 		case c >= 0x20 && c < 0x7f:
-			ch <- key{name: string(rune(c)), r: rune(c), printable: true}
+			ch <- key{name: string(rune(c)), r: rune(c), printable: true, paste: d.inPaste}
 			i++
 		case c >= 0x80: // UTF-8 multibyte, possibly split across reads
 			if !utf8.FullRune(buf[i:]) {
@@ -345,7 +359,7 @@ decode:
 			if r == utf8.RuneError {
 				i++
 			} else {
-				ch <- key{name: string(r), r: r, printable: true}
+				ch <- key{name: string(r), r: r, printable: true, paste: d.inPaste}
 				i += size
 			}
 		default:
@@ -532,6 +546,18 @@ func (m *model) applyHistoryView() {
 // handleKey mutates model state for one keypress and returns what the run loop
 // should do next.
 func (m *model) handleKey(k key) action {
+	// Pasted text is data, never commands: outside an input field it is
+	// dropped wholesale (a file dropped onto the pane once opened the filter
+	// with its own leading slash and blanked the board); inside one, only its
+	// printable runes land — a pasted newline must not submit.
+	if k.paste {
+		if !m.filtering && !m.labeling {
+			return actNone
+		}
+		if !k.printable {
+			return actNone
+		}
+	}
 	if m.overlay != "" || m.help {
 		m.overlay, m.help = "", false
 		return actNone
@@ -821,6 +847,7 @@ func (m *model) View() string {
 		Long: m.cfg.Long, Expand: m.cfg.Expand, Width: m.width,
 		Home: m.cfg.Home, SelPID: m.selPID, PrevStatus: m.prevStatus,
 		Watching: true,
+		Filter:   m.filter.Value(), FilterTotal: len(m.b.Rows),
 	})
 	lines := strings.Split(strings.TrimRight(frame, "\n"), "\n")
 
@@ -830,6 +857,11 @@ func (m *model) View() string {
 		avail = 3
 	}
 	selLine := 3 + m.sel
+	if selLine < avail {
+		// the cursor fits with the header on-screen: pin the frame to the
+		// top, so the summary and agent table can never stay scrolled away
+		m.scroll = 0
+	}
 	if selLine-m.scroll >= avail {
 		m.scroll = selLine - avail + 1
 	}
@@ -875,6 +907,9 @@ func (m *model) historyView() string {
 		avail = 3
 	}
 	selLine := 3 + m.hsel
+	if selLine < avail {
+		m.scroll = 0 // as in View: never leave the header scrolled away
+	}
 	if selLine-m.scroll >= avail {
 		m.scroll = selLine - avail + 1
 	}
@@ -926,7 +961,14 @@ func (m *model) banner() string {
 	if m.b == nil || m.cfg.Plain {
 		return ""
 	}
-	return render.Banner(m.b, m.cfg.Theme, m.width) + "\n"
+	b := render.Banner(m.b, m.cfg.Theme, m.width) + "\n"
+	// In a short pane the wordmark yields to the agent table: keeping both
+	// would emit a frame taller than the pane, and the terminal pushes the
+	// top of it — the summary and table — out of view.
+	if m.height-2-bannerLines(b) < 8 {
+		return ""
+	}
+	return b
 }
 
 func bannerLines(s string) int {

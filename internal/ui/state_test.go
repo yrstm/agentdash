@@ -206,3 +206,49 @@ func TestFilterNarrowsRows(t *testing.T) {
 		t.Fatalf("esc should clear: filtering=%v val=%q rows=%d", m.filtering, m.filter.Value(), len(m.rows))
 	}
 }
+
+// A file dropped onto the pane arrives as a bracketed paste whose first byte
+// is usually '/' — the filter key. Pasted keys are stamped and, outside an
+// input field, ignored wholesale: the drop that blanked a live board behind
+// an accidental filter must be inert.
+func TestDecodeKeysMarksBracketedPaste(t *testing.T) {
+	got := decode([]byte("\x1b[200~/tmp/x.png\n\x1b[201~j"))
+	if len(got) == 0 {
+		t.Fatal("no keys decoded")
+	}
+	last := got[len(got)-1]
+	if last.name != "j" || last.paste {
+		t.Fatalf("trailing typed key = %+v, want plain j", last)
+	}
+	for _, k := range got[:len(got)-1] {
+		if !k.paste {
+			t.Fatalf("pasted key %+v not stamped paste", k)
+		}
+	}
+}
+
+func TestHandleKeyIgnoresPasteOutsideInputs(t *testing.T) {
+	m := &model{
+		b:      &board.Board{Rows: []board.Row{{PID: 1, Task: "alpha"}}},
+		filter: lineInput{prompt: "/"},
+	}
+	m.applyView()
+	for _, k := range decode([]byte("\x1b[200~/tmp/dropped-file.png\n\x1b[201~")) {
+		m.handleKey(k)
+	}
+	if m.filtering || m.filter.Value() != "" || len(m.rows) != 1 {
+		t.Fatalf("paste drove the UI: filtering=%v val=%q rows=%d",
+			m.filtering, m.filter.Value(), len(m.rows))
+	}
+
+	// inside the filter, pasted printables land but a pasted newline must
+	// not submit
+	m.handleKey(key{name: "/"})
+	for _, k := range decode([]byte("\x1b[200~alp\n\x1b[201~")) {
+		m.handleKey(k)
+	}
+	if !m.filtering || m.filter.Value() != "alp" {
+		t.Fatalf("paste into filter: filtering=%v val=%q, want alp still editing",
+			m.filtering, m.filter.Value())
+	}
+}
