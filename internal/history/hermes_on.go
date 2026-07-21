@@ -57,7 +57,7 @@ func hermesResume(s Session) (string, bool) {
 	}
 	cd := ""
 	if s.Cwd != "" {
-		cd = "cd " + s.Cwd + " || exit; "
+		cd = "cd " + s.Cwd + " && "
 	}
 	_, id, ok := hermesdb.SplitKey(s.Path)
 	if !ok {

@@ -70,6 +70,9 @@ func TestSearchBasic(t *testing.T) {
 	if h.Snippet == "" || h.Resume == "" {
 		t.Errorf("missing snippet/resume: %+v", h)
 	}
+	if h.Resume != "cd /home/user/work/api && claude --resume sess-abc" {
+		t.Errorf("resume = %q", h.Resume)
+	}
 
 	// codex message text, two occurrences (user + agent)
 	if res := search(t, home, "leak", nil); len(res.Hits) != 1 || res.Hits[0].Matches != 2 {
