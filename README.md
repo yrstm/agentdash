@@ -445,8 +445,13 @@ cumulative input/output, where input includes cache reads and writes (it
 measures context fill, not billing). CTX is the last request against the
 model's context window, yellow at 70%, red at 85%. ACT is bytes appended
 per refresh over the last 8 intervals. TASK is your label, else the
-session's summary, else the first prompt; a trailing `?` means the
-process-to-session pairing was heuristic.
+session's summary, else the first prompt that reads like one: openers
+that are really instruction files (`#` headers, code fences — codex
+embeds AGENTS.md as its first user message) are skipped in favor of the
+next message, and a leading dropped-file path is trimmed off, so
+`/tmp/notes.md - review this` titles as `review this`. A prompt that is
+only paths titles nothing and the next message is tried. A trailing `?`
+means the process-to-session pairing was heuristic.
 
 Colors carry one meaning each: green working, yellow worth a look, red
 needs you now, dim ignorable. A healthy board is almost colorless.
